@@ -191,33 +191,26 @@ export function Countdown({ endsAt }: { endsAt: string }) {
   )
 }
 
-// ---------- гражданский скор ----------
-
-export function useCivicScore(voter = ME) {
-  const { state } = useStore()
-  const { s } = useSettings()
-  const voteCount = state.votes.filter((v) => v.voter === voter).length
-  const examCount = state.attempts.filter((a) => a.voter === voter && a.status === 'confirmed').length
-  const docCount = s.readDocs.length
-  const score = Math.min(100, voteCount * 25 + docCount * 15 + examCount * 20)
-  return { score, voteCount, examCount, docCount }
-}
+// ---------- индекс участия ----------
 
 export function ScoreRing({ score, size = 76 }: { score: number; size?: number }) {
+  const { lang } = useT()
+  const safeScore = Number.isFinite(score) ? Math.max(0, score) : 0
+  const normalizedScore = Math.min(100, safeScore)
   const radius = (size - 8) / 2
   const circumference = 2 * Math.PI * radius
   return (
     <div className="score-ring" style={{ width: size, height: size }}>
-      <svg viewBox={`0 0 ${size} ${size}`} role="img" aria-label={`${score} / 100`}>
+      <svg viewBox={`0 0 ${size} ${size}`} role="img" aria-label={lang === 'ru' ? `Индекс участия: ${safeScore}` : `Participation index: ${safeScore}`}>
         <circle cx={size / 2} cy={size / 2} r={radius} className="track" />
         <circle
           cx={size / 2} cy={size / 2} r={radius} className="value"
           strokeDasharray={circumference}
-          strokeDashoffset={circumference * (1 - score / 100)}
+          strokeDashoffset={circumference * (1 - normalizedScore / 100)}
           transform={`rotate(-90 ${size / 2} ${size / 2})`}
         />
       </svg>
-      <strong>{score}</strong>
+      <strong>{safeScore}</strong>
     </div>
   )
 }

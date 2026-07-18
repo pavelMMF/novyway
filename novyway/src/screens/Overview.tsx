@@ -1,20 +1,34 @@
+import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { daysLeft, fmtDate, shortAddr, useT } from '../i18n'
 import { ME, exams, useStore } from '../demo/store'
 import { myWeightInSnapshot } from '../demo/store'
-import { AccountRef, CatChip, KV, LinkBtn, Lvl, Meter, Panel, PageHead, ScoreRing, StatusChip, useCivicScore } from '../ui/components'
+import { AccountRef, CatChip, KV, LinkBtn, Lvl, Meter, Panel, PageHead, ScoreRing, StatusChip } from '../ui/components'
 import { bpsToPct, fmtW } from '../domain/weights'
 import { currentRuntimeMode } from '../adapters/types'
 import { useLiveAudit, useLiveVoting } from '../adapters/aptos/useLiveAptos'
 import { configuredVotingModule } from '../adapters/aptos/aptosReadGateway'
 import { aptosTestnetExplorer } from '../adapters/aptos/documentAnchorGateway'
+import { fetchParticipant } from '../adapters/participants'
+import { useAccountSession } from '../auth/session'
 
 export default function Overview() {
   const { t, l, lang } = useT()
   const { state } = useStore()
   const nav = useNavigate()
-  const civic = useCivicScore()
   const runtimeMode = currentRuntimeMode()
+  const { user } = useAccountSession()
+  const [participationScore, setParticipationScore] = useState(0)
+
+  useEffect(() => {
+    setParticipationScore(0)
+    if (!user?.id) return
+    const controller = new AbortController()
+    fetchParticipant(user.id, controller.signal)
+      .then((participant) => setParticipationScore(participant.participationScore))
+      .catch(() => { if (!controller.signal.aborted) setParticipationScore(0) })
+    return () => controller.abort()
+  }, [user?.id])
 
   const active = state.elections.filter((e) => e.status === 'active')
   const needVote = active.filter((e) =>
@@ -31,7 +45,7 @@ export default function Overview() {
         sub={t('ov.sub')}
         right={
           <Link to="/profile" className="row" style={{ gap: 10, alignItems: 'center', textDecoration: 'none' }} title={t('sc.title')}>
-            <ScoreRing score={civic.score} size={52} />
+            <ScoreRing score={participationScore} size={52} />
           </Link>
         }
       />
