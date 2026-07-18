@@ -50,6 +50,7 @@ import {
   activateAptosIdentity,
   createLogicGameRound,
   creatorAccountStatus,
+  dashboardAnalytics,
   dashboardDatabaseStats,
   databasePath,
   deleteSession,
@@ -960,6 +961,9 @@ async function handleOps(request, response, url) {
       creatorAccount,
     })
   }
+  if (url.pathname === '/api/analytics' && request.method === 'GET') {
+    return json(response, 200, await dashboardAnalytics(url.searchParams.get('range') ?? '24h'))
+  }
   if (url.pathname === '/api/settings' && request.method === 'PATCH') {
     const values = opsSettingsSchema.parse(await readJson(request))
     if (values.sponsorshipEnabled && sponsorshipLocked) return json(response, 409, { error: 'sponsorship_emergency_locked' })
@@ -1053,7 +1057,7 @@ opsServer.listen(opsPort, '127.0.0.1')
 
 async function sampleUptime() {
   const chain = await aptosStatus()
-  await recordUptime({ publicOk: true, aptosOk: chain.ok, latencyMs: chain.latencyMs })
+  await recordUptime({ publicOk: publicServer.listening, aptosOk: chain.ok, latencyMs: chain.latencyMs })
 }
 setTimeout(sampleUptime, 1500)
 const sampleTimer = setInterval(sampleUptime, 60_000)

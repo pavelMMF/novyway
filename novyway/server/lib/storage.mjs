@@ -882,10 +882,8 @@ export async function dashboardDatabaseStats() {
     (SELECT COUNT(*)::int FROM vote_intents WHERE created_at > NOW() - INTERVAL '1 day') AS votes_24h,
     (SELECT COUNT(*)::int FROM vote_intents WHERE status IN ('prepared', 'submitted')) AS pending_votes,
     pg_database_size(current_database())::text AS db_bytes`)
-  const [{ rows: recentEvents }, { rows: recentUsers }, { rows: uptime }] = await Promise.all([
+  const [{ rows: recentEvents }, { rows: uptime }] = await Promise.all([
     pool.query('SELECT * FROM ops_events ORDER BY created_at DESC LIMIT 12'),
-    pool.query(`SELECT id, aptos_address, display_name, email, provider, role, status, created_at, last_login_at
-      FROM users ORDER BY last_login_at DESC LIMIT 20`),
     pool.query('SELECT * FROM uptime_samples ORDER BY sampled_at DESC LIMIT 60'),
   ])
   const row = counts[0]
@@ -896,17 +894,110 @@ export async function dashboardDatabaseStats() {
     pendingVotes: row.pending_votes,
     dbBytes: Number(row.db_bytes),
     recentEvents,
-    recentUsers,
     uptime: uptime.reverse(),
   }
 }
 
+const analyticsRanges = {
+  '1h': { window: "INTERVAL '1 hour'", bucket: "INTERVAL '1 minute'" },
+  '24h': { window: "INTERVAL '24 hours'", bucket: "INTERVAL '15 minutes'" },
+  '7d': { window: "INTERVAL '7 days'", bucket: "INTERVAL '1 hour'" },
+}
+
+export async function dashboardAnalytics(requestedRange = '24h') {
+  const range = Object.hasOwn(analyticsRanges, requestedRange) ? requestedRange : '24h'
+  const config = analyticsRanges[range]
+  const origin = "TIMESTAMPTZ '2001-01-01 00:00:00+00'"
+  const bucket = `date_bin(${config.bucket}, created_at, ${origin})`
+  const sampleBucket = `date_bin(${config.bucket}, sampled_at, ${origin})`
+
+  const [{ rows: samples }, { rows: votes }, { rows: users }, { rows: summaryRows }] = await Promise.all([
+    pool.query(`SELECT ${sampleBucket} AS bucket,
+        AVG(CASE WHEN public_ok THEN 100.0 ELSE 0 END)::float8 AS public_uptime_pct,
+        AVG(CASE WHEN aptos_ok THEN 100.0 ELSE 0 END)::float8 AS aptos_uptime_pct,
+        COALESCE(AVG(latency_ms), 0)::float8 AS latency_ms,
+        MAX(users_total)::int AS users_total,
+        AVG(sessions_active)::float8 AS active_sessions
+      FROM uptime_samples
+      WHERE sampled_at >= NOW() - ${config.window}
+      GROUP BY 1 ORDER BY 1`),
+    pool.query(`SELECT ${bucket} AS bucket,
+        COUNT(*)::int AS votes,
+        COUNT(*) FILTER (WHERE status = 'confirmed')::int AS confirmed_votes
+      FROM vote_intents
+      WHERE created_at >= NOW() - ${config.window}
+      GROUP BY 1 ORDER BY 1`),
+    pool.query(`SELECT ${bucket} AS bucket, COUNT(*)::int AS new_users
+      FROM users
+      WHERE created_at >= NOW() - ${config.window}
+      GROUP BY 1 ORDER BY 1`),
+    pool.query(`SELECT
+        COALESCE(AVG(CASE WHEN public_ok THEN 100.0 ELSE 0 END), 0)::float8 AS uptime_percent,
+        COALESCE(AVG(CASE WHEN aptos_ok THEN 100.0 ELSE 0 END), 0)::float8 AS aptos_percent,
+        COALESCE(AVG(latency_ms), 0)::float8 AS average_latency_ms,
+        COALESCE(MAX(sessions_active), 0)::int AS peak_sessions,
+        (SELECT COUNT(*)::int FROM vote_intents WHERE created_at >= NOW() - ${config.window}) AS votes,
+        (SELECT COUNT(*)::int FROM vote_intents WHERE created_at >= NOW() - ${config.window} AND status = 'confirmed') AS confirmed_votes,
+        (SELECT COUNT(*)::int FROM users WHERE created_at >= NOW() - ${config.window}) AS new_users
+      FROM uptime_samples
+      WHERE sampled_at >= NOW() - ${config.window}`),
+  ])
+
+  const points = new Map()
+  const pointFor = (value) => {
+    const at = new Date(value).toISOString()
+    if (!points.has(at)) points.set(at, {
+      at,
+      publicUptimePct: 0,
+      aptosUptimePct: 0,
+      latencyMs: 0,
+      usersTotal: 0,
+      activeSessions: 0,
+      votes: 0,
+      confirmedVotes: 0,
+      newUsers: 0,
+    })
+    return points.get(at)
+  }
+
+  for (const row of samples) Object.assign(pointFor(row.bucket), {
+    publicUptimePct: Number(row.public_uptime_pct),
+    aptosUptimePct: Number(row.aptos_uptime_pct),
+    latencyMs: Number(row.latency_ms),
+    usersTotal: Number(row.users_total),
+    activeSessions: Number(row.active_sessions),
+  })
+  for (const row of votes) Object.assign(pointFor(row.bucket), {
+    votes: Number(row.votes),
+    confirmedVotes: Number(row.confirmed_votes),
+  })
+  for (const row of users) pointFor(row.bucket).newUsers = Number(row.new_users)
+
+  const summary = summaryRows[0]
+  return {
+    range,
+    summary: {
+      uptimePercent: Number(summary.uptime_percent),
+      aptosPercent: Number(summary.aptos_percent),
+      averageLatencyMs: Number(summary.average_latency_ms),
+      peakSessions: Number(summary.peak_sessions),
+      votes: Number(summary.votes),
+      confirmedVotes: Number(summary.confirmed_votes),
+      newUsers: Number(summary.new_users),
+    },
+    series: [...points.values()].sort((left, right) => left.at.localeCompare(right.at)),
+  }
+}
+
 export async function recordUptime({ publicOk, aptosOk, latencyMs }) {
-  const stats = await dashboardDatabaseStats()
+  const { rows } = await pool.query(`SELECT
+    (SELECT COUNT(*)::int FROM users) AS users_total,
+    (SELECT COUNT(*)::int FROM sessions WHERE expires_at > NOW()) AS active_sessions`)
+  const stats = rows[0]
   await pool.query(`INSERT INTO uptime_samples
     (sampled_at, public_ok, aptos_ok, latency_ms, users_total, sessions_active)
     VALUES (NOW(), $1, $2, $3, $4, $5)`,
-  [publicOk, aptosOk, latencyMs ?? null, stats.usersTotal, stats.activeSessions])
+  [publicOk, aptosOk, latencyMs ?? null, stats.users_total, stats.active_sessions])
   await Promise.all([
     pool.query("DELETE FROM uptime_samples WHERE sampled_at < NOW() - INTERVAL '7 days'"),
     pool.query('DELETE FROM sessions WHERE expires_at <= NOW()'),

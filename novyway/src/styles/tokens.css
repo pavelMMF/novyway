@@ -8,6 +8,7 @@
   /* Базовая палитра из handoff */
   --bg: #e9eeeb;
   --surface: #f8faf7;
+  --surface-2: #eef3f0;
   --ink: #111816;
   --ink-2: #66716d;
   --red: #e64232;
@@ -26,6 +27,11 @@
   --yellow-ink: #8a6403;
   --cyan-ink: #006f7b;
   --focus: #006773;
+
+  /* Native scroll areas are part of the visual system, not browser chrome. */
+  --scroll-track: #dfe7e2;
+  --scroll-thumb: #718079;
+  --scroll-thumb-hover: #006f7b;
 
   --border: #ccd6d0;
   --border-strong: #a9b6af;
@@ -76,6 +82,7 @@
 :root[data-theme='dark'] {
   --bg: #111715;
   --surface: #19211e;
+  --surface-2: #131c19;
   --ink: #edf3ef;
   --ink-2: #aab7b1;
   --border: #33413b;
@@ -91,4 +98,7 @@
   --yellow-ink: #f3c857;
   --cyan-ink: #3bd2e2;
   --focus: #52deeb;
+  --scroll-track: #0d1512;
+  --scroll-thumb: #52675e;
+  --scroll-thumb-hover: #3bd2e2;
 }

@@ -10,6 +10,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
+using System.Windows.Markup;
 using System.Windows.Media;
 using System.Windows.Threading;
 
@@ -18,9 +19,49 @@ internal static class OperatorProgram
     [STAThread]
     private static void Main()
     {
-        ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
-        var app = new Application { ShutdownMode = ShutdownMode.OnMainWindowClose };
-        app.Run(new OperatorWindow());
+        try
+        {
+            StartupTrace("process_started");
+            ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
+            var app = new Application { ShutdownMode = ShutdownMode.OnMainWindowClose };
+            StartupTrace("application_created");
+            var window = new OperatorWindow();
+            StartupTrace("window_created");
+            app.MainWindow = window;
+            window.Show();
+            StartupTrace("window_shown");
+            app.Run();
+            StartupTrace("application_stopped");
+        }
+        catch (Exception error)
+        {
+            StartupTrace("fatal: " + error);
+            MessageBox.Show(
+                "Операторская панель не смогла запуститься. Подробности сохранены в локальном журнале.",
+                "Совет онлайн",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error
+            );
+        }
+    }
+
+    internal static void StartupTrace(string message)
+    {
+        try
+        {
+            var configuredRoot = Environment.GetEnvironmentVariable("SOVET_ONLINE_DATA_DIR");
+            var dataRoot = String.IsNullOrWhiteSpace(configuredRoot)
+                ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SovetOnline")
+                : configuredRoot;
+            var directory = Path.Combine(dataRoot, "logs");
+            Directory.CreateDirectory(directory);
+            File.AppendAllText(
+                Path.Combine(directory, "operator-startup.log"),
+                DateTime.UtcNow.ToString("O") + " " + message + Environment.NewLine,
+                Encoding.UTF8
+            );
+        }
+        catch { }
     }
 }
 
@@ -31,6 +72,8 @@ internal sealed class OperatorWindow : Window
     private const string PublicUrl = "https://novyway.com";
     private readonly JavaScriptSerializer json = new JavaScriptSerializer();
     private readonly Dictionary<string, TextBlock> values = new Dictionary<string, TextBlock>();
+    private readonly Dictionary<string, Button> rangeButtons = new Dictionary<string, Button>();
+    private readonly Dictionary<string, Button> modeButtons = new Dictionary<string, Button>();
     private readonly DispatcherTimer timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
     private readonly string root;
     private readonly string operatorKeyPath;
@@ -38,6 +81,8 @@ internal sealed class OperatorWindow : Window
     private Border statusLamp;
     private TextBlock eventText;
     private TextBlock actionText;
+    private TextBlock lastUpdateText;
+    private ContentControl analyticsHost;
     private CheckBox registration;
     private CheckBox sponsorship;
     private CheckBox maintenance;
@@ -47,6 +92,10 @@ internal sealed class OperatorWindow : Window
     private string protectedCreatorAddress = "0xdd2c843725904c661a3b592e84a6794dbe2076e947b045cdc55b8cd7d4cb0411";
     private bool loading;
     private bool settingsDirty;
+    private string analyticsRange = "24h";
+    private string analyticsMode = "numbers";
+    private Dictionary<string, object> analyticsData;
+    private DateTime analyticsLoadedAt = DateTime.MinValue;
 
     private static readonly Brush Bg = Brush("#07110F");
     private static readonly Brush Surface = Brush("#0D1A17");
@@ -60,6 +109,7 @@ internal sealed class OperatorWindow : Window
 
     public OperatorWindow()
     {
+        OperatorProgram.StartupTrace("window_constructor_started");
         root = AppDomain.CurrentDomain.BaseDirectory;
         var dataRoot = Environment.GetEnvironmentVariable("SOVET_ONLINE_DATA_DIR");
         if (String.IsNullOrWhiteSpace(dataRoot)) dataRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SovetOnline");
@@ -76,11 +126,18 @@ internal sealed class OperatorWindow : Window
         Background = Bg;
         Foreground = Ink;
         FontFamily = new FontFamily("Segoe UI");
+        UseLayoutRounding = true;
+        SnapsToDevicePixels = true;
+        OperatorProgram.StartupTrace("theme_resources_start");
+        Resources = CreateThemeResources();
+        OperatorProgram.StartupTrace("theme_resources_ready");
         Content = BuildLayout();
+        OperatorProgram.StartupTrace("layout_ready");
 
-        timer.Tick += async delegate { await RefreshDashboard(); };
+        timer.Tick += async delegate { await RefreshDashboard(false); };
         Loaded += async delegate { timer.Start(); await RefreshDashboard(); };
         Closed += delegate { timer.Stop(); };
+        OperatorProgram.StartupTrace("window_constructor_finished");
     }
 
     private UIElement BuildLayout()
@@ -92,15 +149,14 @@ internal sealed class OperatorWindow : Window
         DockPanel.SetDock(titleBar, Dock.Top);
         shell.Children.Add(titleBar);
 
-        var scroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
-        var body = new Grid { Margin = new Thickness(22, 18, 22, 22) };
-        body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2.05, GridUnitType.Star) });
-        body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(18) });
-        body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var scroll = new ScrollViewer {
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            PanningMode = PanningMode.VerticalOnly,
+        };
+        var body = new StackPanel { Margin = new Thickness(22, 18, 22, 22) };
         body.Children.Add(BuildTelemetry());
-        var controls = BuildControls();
-        Grid.SetColumn(controls, 2);
-        body.Children.Add(controls);
+        body.Children.Add(BuildControls());
         scroll.Content = body;
         shell.Children.Add(scroll);
         return frame;
@@ -124,6 +180,7 @@ internal sealed class OperatorWindow : Window
         var actions = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 12, 0) };
         actions.Children.Add(ActionButton("ОТКРЫТЬ САЙТ", delegate { OpenUrl(PublicUrl); }, false));
         actions.Children.Add(WindowButton("—", delegate { WindowState = WindowState.Minimized; }));
+        actions.Children.Add(WindowButton("□", delegate { WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized; }));
         actions.Children.Add(WindowButton("×", delegate { Close(); }));
         Grid.SetColumn(actions, 1);
         bar.Children.Add(actions);
@@ -143,25 +200,37 @@ internal sealed class OperatorWindow : Window
         statusText = Text("ПРОВЕРКА СИСТЕМЫ", 15, Ink, FontWeights.Bold, "Segoe UI");
         Grid.SetColumn(statusText, 1);
         statusRow.Children.Add(statusText);
-        var build = Text("POSTGRESQL  /  APTOS TESTNET  /  CLOUDFLARE", 10, Muted, FontWeights.Normal, "Consolas");
-        Grid.SetColumn(build, 2);
-        statusRow.Children.Add(build);
+        lastUpdateText = Text("ОЖИДАНИЕ ДАННЫХ", 10, Muted, FontWeights.Normal, "Consolas");
+        Grid.SetColumn(lastUpdateText, 2);
+        statusRow.Children.Add(lastUpdateText);
         status.Child = statusRow;
         stack.Children.Add(status);
 
-        var header = new StackPanel { Margin = new Thickness(2, 24, 0, 12) };
-        header.Children.Add(Text("ТЕЛЕМЕТРИЯ 01", 10, Red, FontWeights.Bold, "Consolas"));
-        header.Children.Add(Text("Живой контур сервиса", 28, Ink, FontWeights.Bold, "Segoe UI"));
+        var header = new Grid { Margin = new Thickness(2, 24, 0, 12) };
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var heading = new StackPanel();
+        heading.Children.Add(Text("ТЕЛЕМЕТРИЯ 01", 10, Red, FontWeights.Bold, "Consolas"));
+        heading.Children.Add(Text("Живой контур сервиса", 28, Ink, FontWeights.Bold, "Segoe UI"));
+        header.Children.Add(heading);
+        var toolbar = BuildAnalyticsToolbar();
+        Grid.SetColumn(toolbar, 1);
+        header.Children.Add(toolbar);
         stack.Children.Add(header);
 
         var metrics = new UniformGrid { Columns = 3, Rows = 2 };
         metrics.Children.Add(Metric("uptime", "АПТАЙМ", "—", Cyan));
         metrics.Children.Add(Metric("users", "ПОЛЬЗОВАТЕЛИ", "—", Gold));
         metrics.Children.Add(Metric("sessions", "АКТИВНЫЕ СЕССИИ", "—", Cyan));
-        metrics.Children.Add(Metric("votes", "ГОЛОСА / 24 Ч", "—", Red));
+        metrics.Children.Add(Metric("votes", "ГОЛОСА / ПОСЛЕДНИЕ 24 Ч", "—", Red));
         metrics.Children.Add(Metric("memory", "ПАМЯТЬ ПРОЦЕССА", "—", Cyan));
         metrics.Children.Add(Metric("db", "POSTGRESQL", "—", Gold));
         stack.Children.Add(metrics);
+
+        var analyticsCard = Card(new Thickness(0, 8, 0, 0));
+        analyticsHost = new ContentControl { Content = EmptyAnalytics("Данные выбранного периода загружаются."), Margin = new Thickness(18) };
+        analyticsCard.Child = analyticsHost;
+        stack.Children.Add(analyticsCard);
 
         var eventsCard = Card(new Thickness(0, 18, 0, 0));
         var eventsStack = new StackPanel { Margin = new Thickness(18) };
@@ -178,15 +247,25 @@ internal sealed class OperatorWindow : Window
 
     private UIElement BuildControls()
     {
-        var stack = new StackPanel();
-        stack.Children.Add(Text("КОНТРОЛЬ 03", 10, Red, FontWeights.Bold, "Consolas"));
-        var title = Text("Операторский шлюз", 24, Ink, FontWeights.Bold, "Segoe UI");
+        var stack = new StackPanel { Margin = new Thickness(0, 24, 0, 0) };
+        stack.Children.Add(Text("ЛОКАЛЬНЫЙ КОНТУР 03", 10, Red, FontWeights.Bold, "Consolas"));
+        var title = Text("Управление сервисом", 24, Ink, FontWeights.Bold, "Segoe UI");
         title.Margin = new Thickness(0, 2, 0, 12);
         stack.Children.Add(title);
 
+        var columns = new Grid();
+        columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(16) });
+        columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var left = new StackPanel();
+        var right = new StackPanel();
+
         var settingsCard = Card();
-        var settingsStack = new StackPanel { Margin = new Thickness(16) };
-        settingsStack.Children.Add(Text("РЕЖИМ САЙТА", 10, Cyan, FontWeights.Bold, "Consolas"));
+        var settingsStack = new StackPanel { Margin = new Thickness(18) };
+        settingsStack.Children.Add(Text("РЕЖИМ САЙТА 04", 10, Cyan, FontWeights.Bold, "Consolas"));
+        var settingsTitle = Text("Доступ и лимиты", 18, Ink, FontWeights.Bold, "Segoe UI");
+        settingsTitle.Margin = new Thickness(0, 4, 0, 4);
+        settingsStack.Children.Add(settingsTitle);
         registration = Toggle("Открыта регистрация");
         sponsorship = Toggle("Спонсирование голосов");
         maintenance = Toggle("Технические работы");
@@ -207,46 +286,318 @@ internal sealed class OperatorWindow : Window
         voteLimit.TextChanged += MarkSettingsTextDirty;
         globalVoteLimit.TextChanged += MarkSettingsTextDirty;
         settingsStack.Children.Add(globalVoteLimit);
-        settingsStack.Children.Add(ActionButton("СОХРАНИТЬ НАСТРОЙКИ", async delegate { await SaveSettings(); }, false));
+        settingsStack.Children.Add(ActionButton("Сохранить настройки", async delegate { await SaveSettings(); }, false));
         settingsCard.Child = settingsStack;
-        stack.Children.Add(settingsCard);
+        left.Children.Add(settingsCard);
 
-        var creatorCard = Card(new Thickness(0, 14, 0, 0));
-        var creatorStack = new StackPanel { Margin = new Thickness(16) };
-        creatorStack.Children.Add(Text("СОЗДАТЕЛЬ 04", 10, Cyan, FontWeights.Bold, "Consolas"));
-        creatorStack.Children.Add(StatusLine("creator", "Аккаунт супер-администратора"));
-        var creatorHint = Text("Почта, пароль и Google объединяются в одном профиле. Ключ creator не копируется в браузер или PostgreSQL.", 10, Muted, FontWeights.Normal, "Segoe UI");
-        creatorHint.Margin = new Thickness(0, 9, 0, 0);
-        creatorHint.TextWrapping = TextWrapping.Wrap;
-        creatorStack.Children.Add(creatorHint);
-        creatorStack.Children.Add(ActionButton("НАСТРОИТЬ АККАУНТ СОЗДАТЕЛЯ", delegate { ConfigureCreatorAccount(); }, false));
-        creatorCard.Child = creatorStack;
-        stack.Children.Add(creatorCard);
+        var securityCard = Card(new Thickness(0, 14, 0, 0));
+        var securityStack = new StackPanel { Margin = new Thickness(18) };
+        securityStack.Children.Add(Text("ЦЕЛОСТНОСТЬ 05", 10, Cyan, FontWeights.Bold, "Consolas"));
+        securityStack.Children.Add(StatusLine("aptos", "Aptos и исходный код модулей"));
+        securityStack.Children.Add(StatusLine("mail", "Служебная почта"));
+        securityStack.Children.Add(StatusLine("relayer", "Баланс relayer"));
+        securityCard.Child = securityStack;
+        left.Children.Add(securityCard);
 
-        var serviceCard = Card(new Thickness(0, 14, 0, 0));
-        var serviceStack = new StackPanel { Margin = new Thickness(16) };
-        serviceStack.Children.Add(Text("СЕРВИС 04", 10, Cyan, FontWeights.Bold, "Consolas"));
-        serviceStack.Children.Add(ActionButton("ЗАПУСТИТЬ", async delegate { StartService(); await DelayRefresh(); }, false));
-        serviceStack.Children.Add(ActionButton("НАСТРОИТЬ СЛУЖЕБНУЮ ПОЧТУ", delegate { ConfigureMail(); }, false));
-        serviceStack.Children.Add(ActionButton("РЕЗЕРВНАЯ КОПИЯ", async delegate { await PostAction("/api/backups"); }, false));
-        serviceStack.Children.Add(ActionButton("ПЕРЕЗАПУСТИТЬ", async delegate { await PostAction("/api/restart"); await DelayRefresh(); }, true));
-        serviceStack.Children.Add(ActionButton("ОСТАНОВИТЬ", async delegate { await PostAction("/api/stop"); await DelayRefresh(); }, true));
+        var serviceCard = Card();
+        var serviceStack = new StackPanel { Margin = new Thickness(18) };
+        serviceStack.Children.Add(Text("СЕРВИС 06", 10, Cyan, FontWeights.Bold, "Consolas"));
+        var serviceTitle = Text("Команды узла", 18, Ink, FontWeights.Bold, "Segoe UI");
+        serviceTitle.Margin = new Thickness(0, 4, 0, 4);
+        serviceStack.Children.Add(serviceTitle);
+        serviceStack.Children.Add(ActionButton("Запустить", async delegate { StartService(); await DelayRefresh(); }, false));
+        serviceStack.Children.Add(ActionButton("Настроить служебную почту", delegate { ConfigureMail(); }, false));
+        serviceStack.Children.Add(ActionButton("Создать резервную копию", async delegate { await PostAction("/api/backups"); }, false));
+        serviceStack.Children.Add(ActionButton("Перезапустить сервис", async delegate { await PostAction("/api/restart"); await DelayRefresh(); }, true));
+        serviceStack.Children.Add(ActionButton("Остановить сервис", async delegate { await PostAction("/api/stop"); await DelayRefresh(); }, true));
         actionText = Text("Локальный API закрыт ключом оператора.", 10, Muted, FontWeights.Normal, "Consolas");
         actionText.Margin = new Thickness(0, 10, 0, 0);
         actionText.TextWrapping = TextWrapping.Wrap;
         serviceStack.Children.Add(actionText);
         serviceCard.Child = serviceStack;
-        stack.Children.Add(serviceCard);
+        right.Children.Add(serviceCard);
 
-        var securityCard = Card(new Thickness(0, 14, 0, 0));
-        var securityStack = new StackPanel { Margin = new Thickness(16) };
-        securityStack.Children.Add(Text("ЗАЩИТА 05", 10, Cyan, FontWeights.Bold, "Consolas"));
-        securityStack.Children.Add(StatusLine("aptos", "Aptos и bytecode"));
-        securityStack.Children.Add(StatusLine("mail", "Служебная почта"));
-        securityStack.Children.Add(StatusLine("relayer", "Баланс relayer"));
-        securityCard.Child = securityStack;
-        stack.Children.Add(securityCard);
+        var creatorCard = Card(new Thickness(0, 14, 0, 0));
+        var creatorStack = new StackPanel { Margin = new Thickness(18) };
+        creatorStack.Children.Add(Text("ЛОКАЛЬНАЯ ИНИЦИАЛИЗАЦИЯ 07", 10, Cyan, FontWeights.Bold, "Consolas"));
+        creatorStack.Children.Add(StatusLine("creator", "Аккаунт создателя проекта"));
+        var creatorHint = Text("Почта, пароль и Google объединяются в одном профиле. Ключ creator не копируется в браузер или PostgreSQL.", 11, Muted, FontWeights.Normal, "Segoe UI");
+        creatorHint.Margin = new Thickness(0, 9, 0, 0);
+        creatorHint.TextWrapping = TextWrapping.Wrap;
+        creatorStack.Children.Add(creatorHint);
+        creatorStack.Children.Add(ActionButton("Настроить аккаунт создателя", delegate { ConfigureCreatorAccount(); }, false));
+        creatorCard.Child = creatorStack;
+        right.Children.Add(creatorCard);
+
+        columns.Children.Add(left);
+        Grid.SetColumn(right, 2);
+        columns.Children.Add(right);
+        stack.Children.Add(columns);
         return stack;
+    }
+
+    private UIElement BuildAnalyticsToolbar()
+    {
+        var toolbar = new StackPanel { HorizontalAlignment = HorizontalAlignment.Right };
+        var modeRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+        modeRow.Children.Add(ToolbarButton("numbers", "ЧИСЛА", modeButtons, delegate { SetAnalyticsMode("numbers"); }));
+        modeRow.Children.Add(ToolbarButton("charts", "ГРАФИКИ", modeButtons, delegate { SetAnalyticsMode("charts"); }));
+        toolbar.Children.Add(modeRow);
+
+        var rangeRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 6, 0, 0) };
+        rangeRow.Children.Add(ToolbarButton("1h", "1 Ч", rangeButtons, async delegate { await SetAnalyticsRange("1h"); }));
+        rangeRow.Children.Add(ToolbarButton("24h", "24 Ч", rangeButtons, async delegate { await SetAnalyticsRange("24h"); }));
+        rangeRow.Children.Add(ToolbarButton("7d", "7 Д", rangeButtons, async delegate { await SetAnalyticsRange("7d"); }));
+        toolbar.Children.Add(rangeRow);
+        UpdateToolbarStyles();
+        return toolbar;
+    }
+
+    private Button ToolbarButton(string key, string label, Dictionary<string, Button> group, RoutedEventHandler handler)
+    {
+        var button = new Button {
+            Content = label,
+            MinWidth = 64,
+            Height = 32,
+            Margin = new Thickness(5, 0, 0, 0),
+            Padding = new Thickness(10, 4, 10, 4),
+            Background = Surface,
+            Foreground = Muted,
+            BorderBrush = BorderBrush,
+            BorderThickness = new Thickness(1),
+            FontFamily = new FontFamily("Consolas"),
+            FontSize = 10,
+            FontWeight = FontWeights.Bold,
+            Cursor = Cursors.Hand,
+        };
+        button.Click += handler;
+        group[key] = button;
+        return button;
+    }
+
+    private async Task SetAnalyticsRange(string range)
+    {
+        if (analyticsRange == range) return;
+        analyticsRange = range;
+        UpdateToolbarStyles();
+        if (analyticsHost != null) analyticsHost.Content = EmptyAnalytics("Пересчитываем выбранный период.");
+        await RefreshDashboard(true);
+    }
+
+    private void SetAnalyticsMode(string mode)
+    {
+        analyticsMode = mode;
+        UpdateToolbarStyles();
+        RenderAnalytics();
+    }
+
+    private void UpdateToolbarStyles()
+    {
+        foreach (var item in rangeButtons)
+        {
+            var selected = item.Key == analyticsRange;
+            item.Value.Background = selected ? Surface2 : Surface;
+            item.Value.Foreground = selected ? Cyan : Muted;
+            item.Value.BorderBrush = selected ? Cyan : BorderBrush;
+        }
+        foreach (var item in modeButtons)
+        {
+            var selected = item.Key == analyticsMode;
+            item.Value.Background = selected ? Surface2 : Surface;
+            item.Value.Foreground = selected ? Cyan : Muted;
+            item.Value.BorderBrush = selected ? Cyan : BorderBrush;
+        }
+    }
+
+    private UIElement EmptyAnalytics(string message)
+    {
+        var empty = new Border { MinHeight = 126, Background = Bg, BorderBrush = BorderBrush, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(4) };
+        empty.Child = new TextBlock {
+            Text = message,
+            Foreground = Muted,
+            FontFamily = new FontFamily("Consolas"),
+            FontSize = 11,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        return empty;
+    }
+
+    private void RenderAnalytics()
+    {
+        if (analyticsHost == null) return;
+        if (analyticsData == null)
+        {
+            analyticsHost.Content = EmptyAnalytics("За выбранный период данных пока нет.");
+            return;
+        }
+        analyticsHost.Content = analyticsMode == "charts" ? BuildChartsAnalytics() : BuildNumbersAnalytics();
+    }
+
+    private UIElement BuildNumbersAnalytics()
+    {
+        var summary = Map(analyticsData, "summary");
+        var grid = new UniformGrid { Columns = 3, Rows = 2 };
+        grid.Children.Add(AnalyticsMetric("ДОСТУПНОСТЬ САЙТА", DecimalNumber(summary, "uptimePercent").ToString("0.0") + "%", Cyan));
+        grid.Children.Add(AnalyticsMetric("ДОСТУПНОСТЬ APTOS", DecimalNumber(summary, "aptosPercent").ToString("0.0") + "%", Cyan));
+        grid.Children.Add(AnalyticsMetric("СРЕДНЯЯ ЗАДЕРЖКА", DecimalNumber(summary, "averageLatencyMs").ToString("0") + " МС", Gold));
+        grid.Children.Add(AnalyticsMetric("ПИК АКТИВНЫХ СЕССИЙ", Val(summary, "peakSessions", "0"), Gold));
+        grid.Children.Add(AnalyticsMetric("ГОЛОСА / ПОДТВЕРЖДЕНО", Val(summary, "votes", "0") + " / " + Val(summary, "confirmedVotes", "0"), Red));
+        grid.Children.Add(AnalyticsMetric("НОВЫЕ ПОЛЬЗОВАТЕЛИ", Val(summary, "newUsers", "0"), Cyan));
+        return grid;
+    }
+
+    private Border AnalyticsMetric(string label, string value, Brush accent)
+    {
+        var card = new Border { Margin = new Thickness(0, 0, 10, 10), Padding = new Thickness(14), Background = Surface2, BorderBrush = BorderBrush, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(4) };
+        var stack = new StackPanel();
+        stack.Children.Add(Text(label, 10, accent, FontWeights.Bold, "Consolas"));
+        var number = Text(value, 22, Ink, FontWeights.Bold, "Consolas");
+        number.Margin = new Thickness(0, 7, 0, 0);
+        stack.Children.Add(number);
+        card.Child = stack;
+        return card;
+    }
+
+    private UIElement BuildChartsAnalytics()
+    {
+        var grid = new Grid();
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(12) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(12) });
+        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+        grid.Children.Add(Chart("Активные сессии", "activeSessions", "", Cyan, false));
+        var latency = Chart("Задержка Aptos", "latencyMs", " мс", Gold, false);
+        Grid.SetColumn(latency, 2);
+        grid.Children.Add(latency);
+        var votes = Chart("Голоса по интервалам", "votes", "", Red, true);
+        Grid.SetRow(votes, 2);
+        grid.Children.Add(votes);
+        var users = Chart("Новые пользователи", "newUsers", "", Cyan, true);
+        Grid.SetColumn(users, 2);
+        Grid.SetRow(users, 2);
+        grid.Children.Add(users);
+        return grid;
+    }
+
+    private Border Chart(string title, string key, string unit, Brush accent, bool bars)
+    {
+        var card = new Border { Padding = new Thickness(14), Background = Surface2, BorderBrush = BorderBrush, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(4) };
+        var stack = new StackPanel();
+        var series = analyticsData.ContainsKey("series") ? analyticsData["series"] as object[] : null;
+        if (series == null || series.Length == 0)
+        {
+            stack.Children.Add(Text(title, 13, Ink, FontWeights.Bold, "Segoe UI"));
+            var noData = Text("Нет измерений в этом периоде.", 10, Muted, FontWeights.Normal, "Consolas");
+            noData.Margin = new Thickness(0, 34, 0, 34);
+            noData.HorizontalAlignment = HorizontalAlignment.Center;
+            stack.Children.Add(noData);
+            card.Child = stack;
+            return card;
+        }
+
+        var valuesList = new List<double>();
+        var points = new List<Dictionary<string, object>>();
+        foreach (var item in series)
+        {
+            var point = item as Dictionary<string, object>;
+            if (point == null) continue;
+            points.Add(point);
+            valuesList.Add(DecimalNumber(point, key));
+        }
+        var maximum = 1d;
+        foreach (var value in valuesList) maximum = Math.Max(maximum, value);
+
+        var heading = new Grid();
+        heading.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        heading.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        heading.Children.Add(Text(title, 13, Ink, FontWeights.Bold, "Segoe UI"));
+        var maximumText = Text("МАКС. " + maximum.ToString(maximum < 10 ? "0.0" : "0") + unit.ToUpperInvariant(), 9, accent, FontWeights.Bold, "Consolas");
+        Grid.SetColumn(maximumText, 1);
+        heading.Children.Add(maximumText);
+        stack.Children.Add(heading);
+
+        const double width = 560;
+        const double height = 150;
+        const double left = 36;
+        const double right = 8;
+        const double top = 12;
+        const double bottom = 24;
+        var plotWidth = width - left - right;
+        var plotHeight = height - top - bottom;
+        var canvas = new Canvas { Width = width, Height = height, Background = Bg, Margin = new Thickness(0, 10, 0, 0) };
+        for (var row = 0; row < 4; row++)
+        {
+            var y = top + plotHeight * row / 3d;
+            canvas.Children.Add(new System.Windows.Shapes.Line { X1 = left, X2 = width - right, Y1 = y, Y2 = y, Stroke = BorderBrush, StrokeThickness = 1, Opacity = .7 });
+        }
+
+        if (bars)
+        {
+            var slot = plotWidth / Math.Max(1, points.Count);
+            for (var i = 0; i < points.Count; i++)
+            {
+                var value = valuesList[i];
+                var barHeight = value / maximum * plotHeight;
+                var rectangle = new System.Windows.Shapes.Rectangle {
+                    Width = Math.Max(2, slot * .64),
+                    Height = Math.Max(value > 0 ? 2 : 0, barHeight),
+                    Fill = accent,
+                    Opacity = .82,
+                    ToolTip = PointTooltip(points[i], value, unit),
+                };
+                Canvas.SetLeft(rectangle, left + i * slot + slot * .18);
+                Canvas.SetTop(rectangle, top + plotHeight - rectangle.Height);
+                canvas.Children.Add(rectangle);
+            }
+        }
+        else
+        {
+            var line = new System.Windows.Shapes.Polyline { Stroke = accent, StrokeThickness = 2.2, StrokeLineJoin = PenLineJoin.Round };
+            for (var i = 0; i < points.Count; i++)
+            {
+                var x = left + (points.Count == 1 ? plotWidth / 2 : plotWidth * i / (points.Count - 1d));
+                var y = top + plotHeight - valuesList[i] / maximum * plotHeight;
+                line.Points.Add(new Point(x, y));
+            }
+            canvas.Children.Add(line);
+            for (var i = 0; i < points.Count; i++)
+            {
+                var x = left + (points.Count == 1 ? plotWidth / 2 : plotWidth * i / (points.Count - 1d));
+                var y = top + plotHeight - valuesList[i] / maximum * plotHeight;
+                var marker = new System.Windows.Shapes.Ellipse { Width = 7, Height = 7, Fill = Bg, Stroke = accent, StrokeThickness = 2, ToolTip = PointTooltip(points[i], valuesList[i], unit) };
+                Canvas.SetLeft(marker, x - 3.5);
+                Canvas.SetTop(marker, y - 3.5);
+                canvas.Children.Add(marker);
+            }
+        }
+
+        var firstLabel = Text(PointTime(points[0]), 8, Muted, FontWeights.Normal, "Consolas");
+        Canvas.SetLeft(firstLabel, left);
+        Canvas.SetTop(firstLabel, height - 18);
+        canvas.Children.Add(firstLabel);
+        var lastLabel = Text(PointTime(points[points.Count - 1]), 8, Muted, FontWeights.Normal, "Consolas");
+        Canvas.SetRight(lastLabel, right);
+        Canvas.SetTop(lastLabel, height - 18);
+        canvas.Children.Add(lastLabel);
+        var view = new Viewbox { Stretch = Stretch.Uniform, StretchDirection = StretchDirection.DownOnly, Child = canvas };
+        stack.Children.Add(view);
+        card.Child = stack;
+        return card;
+    }
+
+    private static string PointTooltip(Dictionary<string, object> point, double value, string unit)
+    {
+        return PointTime(point) + Environment.NewLine + value.ToString(value < 10 ? "0.0" : "0") + unit;
+    }
+
+    private static string PointTime(Dictionary<string, object> point)
+    {
+        DateTime parsed;
+        return DateTime.TryParse(Val(point, "at", ""), out parsed) ? parsed.ToLocalTime().ToString("dd.MM HH:mm") : Val(point, "at", "—");
     }
 
     private Border Metric(string key, string label, string initial, Brush accent)
@@ -277,15 +628,31 @@ internal sealed class OperatorWindow : Window
         return grid;
     }
 
-    private async Task RefreshDashboard()
+    private Task RefreshDashboard()
+    {
+        return RefreshDashboard(true);
+    }
+
+    private async Task RefreshDashboard(bool forceAnalytics)
     {
         if (loading) return;
         loading = true;
         try
         {
-            var raw = await Task.Run(delegate { return Api("GET", "/api/dashboard", null); });
+            var dashboardTask = Task.Run(delegate { return Api("GET", "/api/dashboard", null); });
+            var refreshAnalytics = forceAnalytics || analyticsData == null || DateTime.UtcNow - analyticsLoadedAt > TimeSpan.FromSeconds(30);
+            Task<string> analyticsTask = refreshAnalytics
+                ? Task.Run(delegate { return Api("GET", "/api/analytics?range=" + analyticsRange, null); })
+                : null;
+            var raw = await dashboardTask;
             var data = json.DeserializeObject(raw) as Dictionary<string, object>;
             RenderDashboard(data);
+            if (analyticsTask != null)
+            {
+                analyticsData = json.DeserializeObject(await analyticsTask) as Dictionary<string, object>;
+                analyticsLoadedAt = DateTime.UtcNow;
+                RenderAnalytics();
+            }
         }
         catch (Exception error)
         {
@@ -301,9 +668,15 @@ internal sealed class OperatorWindow : Window
         var chain = Map(data, "chain");
         var settings = Map(data, "settings");
         var creatorAccount = Map(data, "creatorAccount");
-        statusLamp.Background = Cyan;
-        statusLamp.Effect = new System.Windows.Media.Effects.DropShadowEffect { Color = Colors.Cyan, BlurRadius = 14, ShadowDepth = 0, Opacity = .7 };
-        statusText.Text = "СИСТЕМА В НОРМЕ  /  PID " + Val(service, "pid", "—");
+        var chainHealthy = Bool(chain, "ok") && Bool(chain, "sourceParityVerified");
+        statusLamp.Background = chainHealthy ? Cyan : Gold;
+        statusLamp.Effect = new System.Windows.Media.Effects.DropShadowEffect {
+            Color = chainHealthy ? Colors.Cyan : Color.FromRgb(214, 167, 33),
+            BlurRadius = 14,
+            ShadowDepth = 0,
+            Opacity = .7,
+        };
+        statusText.Text = (chainHealthy ? "СИСТЕМА В НОРМЕ" : "СИСТЕМА ОГРАНИЧЕНА") + "  /  PID " + Val(service, "pid", "—");
         values["uptime"].Text = FormatUptime(Number(service, "uptimeSeconds"));
         values["users"].Text = Val(database, "usersTotal", "0");
         values["sessions"].Text = Val(database, "activeSessions", "0");
@@ -330,7 +703,7 @@ internal sealed class OperatorWindow : Window
         sponsorship.IsEnabled = !Bool(settings, "sponsorshipLocked");
         sponsorship.ToolTip = sponsorship.IsEnabled ? null : "Спонсирование заблокировано до воспроизводимой сборки Move-контрактов.";
         eventText.Text = FormatEvents(database.ContainsKey("recentEvents") ? database["recentEvents"] as object[] : null);
-        actionText.Text = "Синхронизация " + DateTime.Now.ToString("HH:mm:ss") + "  /  loopback 4177";
+        lastUpdateText.Text = "ОБНОВЛЕНО " + DateTime.Now.ToString("HH:mm:ss") + "  /  LOOPBACK 4177";
     }
 
     private void SetOffline(string message)
@@ -339,6 +712,7 @@ internal sealed class OperatorWindow : Window
         statusLamp.Effect = null;
         statusText.Text = "СЕРВИС НЕДОСТУПЕН";
         actionText.Text = "Нет связи: " + message;
+        if (lastUpdateText != null) lastUpdateText.Text = "НЕТ СВЕЖИХ ДАННЫХ";
     }
 
     private void MarkSettingsDirty(object sender, RoutedEventArgs args)
@@ -391,6 +765,7 @@ internal sealed class OperatorWindow : Window
             Background = Bg,
             Foreground = Ink,
             FontFamily = new FontFamily("Segoe UI"),
+            Resources = Resources,
         };
         var frame = new Border { Background = Bg, BorderBrush = Red, BorderThickness = new Thickness(1), Padding = new Thickness(24) };
         var stack = new StackPanel();
@@ -573,6 +948,12 @@ internal sealed class OperatorWindow : Window
         return Int64.TryParse(Val(source, key, "0"), out value) ? value : 0;
     }
 
+    private static double DecimalNumber(Dictionary<string, object> source, string key)
+    {
+        double value;
+        return Double.TryParse(Val(source, key, "0"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out value) ? value : 0;
+    }
+
     private static bool Bool(Dictionary<string, object> source, string key)
     {
         bool value;
@@ -632,6 +1013,89 @@ internal sealed class OperatorWindow : Window
         var button = new Button { Content = label, Width = 42, Height = 42, Margin = new Thickness(6, 0, 0, 0), Background = Brushes.Transparent, Foreground = Ink, BorderBrush = BorderBrush, FontSize = 18, Cursor = Cursors.Hand };
         button.Click += action;
         return button;
+    }
+
+    private static ResourceDictionary CreateThemeResources()
+    {
+        const string xaml = @"
+<ResourceDictionary xmlns=""http://schemas.microsoft.com/winfx/2006/xaml/presentation""
+                    xmlns:x=""http://schemas.microsoft.com/winfx/2006/xaml"">
+  <Style TargetType=""{x:Type ScrollBar}"">
+    <Setter Property=""Width"" Value=""10"" />
+    <Setter Property=""Background"" Value=""#07110F"" />
+    <Setter Property=""Template"">
+      <Setter.Value>
+        <ControlTemplate TargetType=""{x:Type ScrollBar}"">
+          <Grid Background=""{TemplateBinding Background}"">
+            <Border BorderBrush=""#2C4841"" BorderThickness=""1"" CornerRadius=""3"" />
+            <Track x:Name=""PART_Track"" Orientation=""{TemplateBinding Orientation}""
+                   IsDirectionReversed=""True"" Minimum=""{TemplateBinding Minimum}""
+                   Maximum=""{TemplateBinding Maximum}"" Value=""{TemplateBinding Value}""
+                   ViewportSize=""{TemplateBinding ViewportSize}"">
+              <Track.DecreaseRepeatButton>
+                <RepeatButton Command=""{x:Static ScrollBar.PageUpCommand}"" Opacity=""0"" Focusable=""False"" />
+              </Track.DecreaseRepeatButton>
+              <Track.Thumb>
+                <Thumb MinHeight=""42"" Background=""#52675E"" Cursor=""Hand"">
+                  <Thumb.Template>
+                    <ControlTemplate TargetType=""{x:Type Thumb}"">
+                      <Grid>
+                        <Border Background=""{TemplateBinding Background}"" BorderBrush=""#12C7D5"" BorderThickness=""1"" CornerRadius=""2"" />
+                        <Border Height=""7"" Margin=""1"" VerticalAlignment=""Top"" Background=""#F4473B"" CornerRadius=""1"" />
+                      </Grid>
+                    </ControlTemplate>
+                  </Thumb.Template>
+                </Thumb>
+              </Track.Thumb>
+              <Track.IncreaseRepeatButton>
+                <RepeatButton Command=""{x:Static ScrollBar.PageDownCommand}"" Opacity=""0"" Focusable=""False"" />
+              </Track.IncreaseRepeatButton>
+            </Track>
+          </Grid>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+    <Style.Triggers>
+      <Trigger Property=""Orientation"" Value=""Horizontal"">
+        <Setter Property=""Width"" Value=""Auto"" />
+        <Setter Property=""Height"" Value=""10"" />
+      </Trigger>
+    </Style.Triggers>
+  </Style>
+  <Style TargetType=""{x:Type CheckBox}"">
+    <Setter Property=""Foreground"" Value=""#EEF5F1"" />
+    <Setter Property=""Template"">
+      <Setter.Value>
+        <ControlTemplate TargetType=""{x:Type CheckBox}"">
+          <Grid MinHeight=""34"">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width=""22"" />
+              <ColumnDefinition Width=""*"" />
+            </Grid.ColumnDefinitions>
+            <Border x:Name=""Box"" Width=""18"" Height=""18"" BorderBrush=""#52675E"" BorderThickness=""1"" Background=""#07110F"" CornerRadius=""2"">
+              <Path x:Name=""Mark"" Data=""M 3 8 L 7 12 L 15 3"" Stroke=""#07110F"" StrokeThickness=""2"" Visibility=""Collapsed"" />
+            </Border>
+            <ContentPresenter Grid.Column=""1"" Margin=""7,0,0,0"" VerticalAlignment=""Center"" RecognizesAccessKey=""True"" />
+          </Grid>
+          <ControlTemplate.Triggers>
+            <Trigger Property=""IsChecked"" Value=""True"">
+              <Setter TargetName=""Box"" Property=""Background"" Value=""#12C7D5"" />
+              <Setter TargetName=""Box"" Property=""BorderBrush"" Value=""#12C7D5"" />
+              <Setter TargetName=""Mark"" Property=""Visibility"" Value=""Visible"" />
+            </Trigger>
+            <Trigger Property=""IsKeyboardFocused"" Value=""True"">
+              <Setter TargetName=""Box"" Property=""BorderBrush"" Value=""#F4473B"" />
+            </Trigger>
+            <Trigger Property=""IsEnabled"" Value=""False"">
+              <Setter Property=""Opacity"" Value=""0.5"" />
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+</ResourceDictionary>";
+        return (ResourceDictionary)XamlReader.Parse(xaml);
     }
 
     private static Brush Brush(string value) { return (Brush)new BrushConverter().ConvertFromString(value); }

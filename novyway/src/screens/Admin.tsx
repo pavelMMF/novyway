@@ -314,7 +314,8 @@ function PolicyEditor() {
       </Panel>
 
       <Panel title={t('ad.preview')} hint={`S = N0/q0 = ${fmtW(preview.scaleS)}`}>
-        <table className="tbl">
+        <div className="table-scroll" tabIndex={0} aria-label={t('ad.preview')}>
+        <table className="tbl admin-preview-table">
           <thead>
             <tr><th>{t('common.level')}</th><th>N</th><th>q</th><th>T</th><th>w</th><th>Σ</th></tr>
           </thead>
@@ -331,6 +332,7 @@ function PolicyEditor() {
             ))}
           </tbody>
         </table>
+        </div>
         <div className="row" style={{ marginTop: 10 }}>
           <KV k="eligible weight" v={fmtW(preview.eligibleWeight)} big />
         </div>
@@ -449,7 +451,8 @@ function NewElection() {
 
       {preview && cat && (
         <Panel title={t('ad.preview')} hint={`${l(cat.name)} · policy v${cat.policy.policyVersion}`}>
-          <table className="tbl">
+          <div className="table-scroll" tabIndex={0} aria-label={t('ad.preview')}>
+          <table className="tbl admin-preview-table">
             <thead><tr><th>{t('common.level')}</th><th>N</th><th>T</th><th>w</th></tr></thead>
             <tbody>
               {preview.groups.map((g, k) => (
@@ -462,6 +465,7 @@ function NewElection() {
               ))}
             </tbody>
           </table>
+          </div>
           <div style={{ marginTop: 10 }}>
             {preview.ok
               ? <div className="callout lime">✓ {t('ad.snapshotOk')} · eligible {fmtW(preview.eligibleWeight)}</div>

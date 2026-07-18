@@ -30,7 +30,7 @@ type AdminElectionRow = {
   endsAt: string
 }
 
-type PendingAction = { title: string; details: string; run: () => Promise<void> }
+type PendingAction = { title: string; details: string; run: () => Promise<void>; danger?: boolean }
 
 function decodeBytes(value: unknown) {
   if (typeof value !== 'string' || !value.startsWith('0x')) return ''
@@ -63,7 +63,8 @@ function AdminMembershipContent({ governance }: { governance: GovernanceAdminSta
   const [users, setUsers] = useState<RegisteredUser[]>([])
   const [categories, setCategories] = useState<ChainCategory[]>([])
   const [elections, setElections] = useState<AdminElectionRow[]>([])
-  const [candidate, setCandidate] = useState('')
+  const [appointmentCandidate, setAppointmentCandidate] = useState('')
+  const [electionCandidate, setElectionCandidate] = useState('')
   const [mode, setMode] = useState<0 | 1>(1)
   const [categoryId, setCategoryId] = useState(0)
   const [days, setDays] = useState(14)
@@ -114,14 +115,16 @@ function AdminMembershipContent({ governance }: { governance: GovernanceAdminSta
     setUsers(loadedUsers)
     setCategories(loadedCategories)
     setElections(loadedElections.reverse())
-    setCandidate((current) => current || loadedUsers[0]?.aptosAddress || '')
+    setAppointmentCandidate((current) => current || loadedUsers[0]?.aptosAddress || '')
+    setElectionCandidate((current) => current || loadedUsers[0]?.aptosAddress || '')
     setCategoryId((current) => loadedCategories.some((item) => item.id === current) ? current : loadedCategories[0]?.id ?? 0)
     setLoading(false)
   }, [])
 
   useEffect(() => { void load().catch((error) => { setLoading(false); setMessage(error instanceof Error ? error.message : 'load_failed') }) }, [load])
 
-  const validCandidate = /^0x[0-9a-f]{1,64}$/i.test(candidate)
+  const validAppointmentCandidate = /^0x[0-9a-f]{1,64}$/i.test(appointmentCandidate)
+  const validElectionCandidate = /^0x[0-9a-f]{1,64}$/i.test(electionCandidate)
 
   async function submit(moduleName: 'weighted_voting' | 'admin_election', functionName: string, args: unknown[], action: string, reloadPage = false) {
     if (!walletMatches) {
@@ -154,12 +157,12 @@ function AdminMembershipContent({ governance }: { governance: GovernanceAdminSta
   }
 
   async function createAdminElection() {
-    if (!validCandidate || !Number.isInteger(days) || days < 1 || days > 365 || !Number.isInteger(passPct) || passPct < 50 || passPct > 100 || !Number.isInteger(quorumPct) || quorumPct < 0 || quorumPct > 100) {
+    if (!validElectionCandidate || !Number.isInteger(days) || days < 1 || days > 365 || !Number.isInteger(passPct) || passPct < 50 || passPct > 100 || !Number.isInteger(quorumPct) || quorumPct < 0 || quorumPct > 100) {
       setMessage(ru ? 'Проверьте Aptos-адрес, срок, порог и кворум.' : 'Check the Aptos address, duration, threshold, and quorum.')
       return
     }
     const payload = {
-      candidate,
+      candidate: electionCandidate,
       mode,
       categoryId: mode === 1 ? categoryId : 0,
       passBps: passPct * 100,
@@ -170,11 +173,11 @@ function AdminMembershipContent({ governance }: { governance: GovernanceAdminSta
     const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(payload))))
     const endsAt = Math.floor(Date.now() / 1_000) + days * 86_400
     await submit('admin_election', 'create_election', [
-      candidate,
+      electionCandidate,
       mode,
       mode === 1 ? categoryId : 0,
       hash,
-      new TextEncoder().encode(`https://novyway.com/audit?admin-candidate=${encodeURIComponent(candidate)}`),
+      new TextEncoder().encode(`https://novyway.com/audit?admin-candidate=${encodeURIComponent(electionCandidate)}`),
       0,
       endsAt,
       passPct * 100,
@@ -198,12 +201,12 @@ function AdminMembershipContent({ governance }: { governance: GovernanceAdminSta
       <Panel title={ru ? 'Прямое назначение' : 'Direct appointment'} hint={ru ? 'решение creator' : 'creator decision'}>
         <div className="stack">
           <label className="field"><span>{ru ? 'Пользователь' : 'User'}</span>
-            <select value={candidate} onChange={(event) => setCandidate(event.target.value)}>
+            <select value={appointmentCandidate} onChange={(event) => setAppointmentCandidate(event.target.value)}>
               {users.map((user) => <option value={user.aptosAddress} key={user.id}>{user.displayName || shortAddress(user.aptosAddress)} · {user.provider}</option>)}
             </select>
           </label>
-          <label className="field"><span>{ru ? 'Aptos-адрес' : 'Aptos address'}</span><input className="mono" value={candidate} onChange={(event) => setCandidate(event.target.value.trim())} /></label>
-          <button className="btn primary" disabled={!validCandidate || busy !== null || governance.administrators.some((item) => item.toLowerCase() === candidate.toLowerCase())} onClick={() => setPending({ title: ru ? 'Подтвердить назначение' : 'Confirm appointment', details: ru ? `Адрес ${shortAddress(candidate)} сразу войдёт в состав Совета. Порог подтверждений может измениться.` : `${shortAddress(candidate)} will immediately join the Council. The approval threshold may change.`, run: () => submit('weighted_voting', 'add_admin', [candidate], 'add-admin', true) })}>{ru ? 'Назначить администратором' : 'Appoint administrator'}</button>
+          <label className="field"><span>{ru ? 'Aptos-адрес' : 'Aptos address'}</span><input className="mono" value={appointmentCandidate} onChange={(event) => setAppointmentCandidate(event.target.value.trim())} /></label>
+          <button className="btn primary" disabled={!validAppointmentCandidate || busy !== null || governance.administrators.some((item) => item.toLowerCase() === appointmentCandidate.toLowerCase())} onClick={() => setPending({ title: ru ? 'Подтвердить назначение' : 'Confirm appointment', details: ru ? `Адрес ${shortAddress(appointmentCandidate)} сразу войдёт в состав Совета. Порог подтверждений может измениться.` : `${shortAddress(appointmentCandidate)} will immediately join the Council. The approval threshold may change.`, run: () => submit('weighted_voting', 'add_admin', [appointmentCandidate], 'add-admin', true) })}>{ru ? 'Назначить администратором' : 'Appoint administrator'}</button>
           <p className="muted">{ru ? 'Назначение фиксируется напрямую в Aptos и отдельно от выборного назначения.' : 'The appointment is recorded directly on Aptos and remains distinct from an elected appointment.'}</p>
         </div>
       </Panel>
@@ -212,7 +215,7 @@ function AdminMembershipContent({ governance }: { governance: GovernanceAdminSta
         <div className="stack compact-stack">
           {governance.administrators.map((address) => <div className="admin-member-row" key={address}>
             <div><strong>{address.toLowerCase() === governance.creator.toLowerCase() ? (ru ? 'Creator' : 'Creator') : (ru ? 'Администратор' : 'Administrator')}</strong><div className="mono muted">{shortAddress(address)}</div></div>
-            {address.toLowerCase() !== governance.creator.toLowerCase() && <button className="btn small danger" disabled={busy !== null} onClick={() => setPending({ title: ru ? 'Удалить администратора?' : 'Remove administrator?', details: ru ? `${shortAddress(address)} потеряет административные полномочия. Операция останется в публичном журнале.` : `${shortAddress(address)} will lose administrative privileges. The action remains in the public log.`, run: () => submit('weighted_voting', 'remove_admin', [address], `remove-${address}`, true) })}>{ru ? 'Удалить' : 'Remove'}</button>}
+            {address.toLowerCase() !== governance.creator.toLowerCase() && <button className="btn small danger" disabled={busy !== null} onClick={() => setPending({ title: ru ? 'Удалить администратора?' : 'Remove administrator?', details: ru ? `${shortAddress(address)} потеряет административные полномочия. Операция останется в публичном журнале.` : `${shortAddress(address)} will lose administrative privileges. The action remains in the public log.`, run: () => submit('weighted_voting', 'remove_admin', [address], `remove-${address}`, true), danger: true })}>{ru ? 'Удалить' : 'Remove'}</button>}
           </div>)}
         </div>
       </Panel>
@@ -222,7 +225,7 @@ function AdminMembershipContent({ governance }: { governance: GovernanceAdminSta
       <Panel title={ru ? 'Выборы администратора' : 'Administrator election'} hint={ru ? 'публичный on-chain процесс' : 'public on-chain process'}>
         <div className="stack">
           <label className="field"><span>{ru ? 'Кандидат' : 'Candidate'}</span>
-            <select value={candidate} onChange={(event) => setCandidate(event.target.value)}>{users.map((user) => <option value={user.aptosAddress} key={user.id}>{user.displayName || shortAddress(user.aptosAddress)}</option>)}</select>
+            <select value={electionCandidate} onChange={(event) => setElectionCandidate(event.target.value)}>{users.map((user) => <option value={user.aptosAddress} key={user.id}>{user.displayName || shortAddress(user.aptosAddress)}</option>)}</select>
           </label>
           <div className="seg" role="radiogroup" aria-label={ru ? 'Способ подсчёта' : 'Counting mode'}>
             <button type="button" role="radio" aria-checked={mode === 1} className={mode === 1 ? 'on' : ''} onClick={() => setMode(1)}>{ru ? 'Экспертные веса' : 'Expert weights'}</button>
@@ -235,7 +238,7 @@ function AdminMembershipContent({ governance }: { governance: GovernanceAdminSta
             <label className="field"><span>{ru ? 'Кворум, %' : 'Quorum, %'}</span><input type="number" min={0} max={100} value={quorumPct} onChange={(event) => setQuorumPct(Number(event.target.value))} /></label>
           </div>
           <label className="check-row"><input type="checkbox" checked={allowRevote} onChange={(event) => setAllowRevote(event.target.checked)} /><span>{ru ? 'Разрешить переголосование' : 'Allow revoting'}</span></label>
-          <button className="btn primary" disabled={!validCandidate || busy !== null || (mode === 0 && users.filter((user) => user.equalVoter).length === 0)} onClick={() => setPending({ title: ru ? 'Опубликовать выборы?' : 'Publish election?', details: ru ? `${mode === 1 ? `Экспертные веса темы «${categories.find((item) => item.id === categoryId)?.name ?? categoryId}»` : 'Один допущенный аккаунт — один голос'}; порог ${passPct}%, кворум ${quorumPct}%, срок ${days} дн.` : `${mode === 1 ? `Expert weights in ${categories.find((item) => item.id === categoryId)?.name ?? categoryId}` : 'One admitted account, one vote'}; pass ${passPct}%, quorum ${quorumPct}%, ${days} days.`, run: createAdminElection })}>{ru ? 'Создать on-chain голосование' : 'Create on-chain election'}</button>
+          <button className="btn primary" disabled={!validElectionCandidate || busy !== null || (mode === 0 && users.filter((user) => user.equalVoter).length === 0)} onClick={() => setPending({ title: ru ? 'Опубликовать выборы?' : 'Publish election?', details: ru ? `${mode === 1 ? `Экспертные веса темы «${categories.find((item) => item.id === categoryId)?.name ?? categoryId}»` : 'Один допущенный аккаунт — один голос'}; порог ${passPct}%, кворум ${quorumPct}%, срок ${days} дн.` : `${mode === 1 ? `Expert weights in ${categories.find((item) => item.id === categoryId)?.name ?? categoryId}` : 'One admitted account, one vote'}; pass ${passPct}%, quorum ${quorumPct}%, ${days} days.`, run: createAdminElection })}>{ru ? 'Создать on-chain голосование' : 'Create on-chain election'}</button>
           {mode === 1 && <p className="muted">{ru ? 'Право голоса и вес берутся из замороженного снимка выбранной темы. Квалификации, изменённые после открытия, на эти выборы не влияют.' : 'Eligibility and weight come from a frozen snapshot of the selected category. Later qualification changes do not affect this election.'}</p>}
           {mode === 0 && <p className="muted">{ru ? `В снапшот войдут только заранее допущенные аккаунты: ${users.filter((user) => user.equalVoter).length}. Это не паспортная проверка личности.` : `Only pre-approved accounts enter the snapshot: ${users.filter((user) => user.equalVoter).length}. This is not proof of personhood.`}</p>}
         </div>
@@ -247,7 +250,7 @@ function AdminMembershipContent({ governance }: { governance: GovernanceAdminSta
           {!loading && users.length === 0 && <div className="empty">{ru ? 'Зарегистрированных пользователей пока нет.' : 'There are no registered users yet.'}</div>}
           {users.map((user) => <div className="admin-member-row" key={user.id}>
             <div><strong>{user.displayName || shortAddress(user.aptosAddress)}</strong><div className="mono muted">{shortAddress(user.aptosAddress)}</div></div>
-            <button className={`btn small ${user.equalVoter ? 'danger' : 'primary'}`} disabled={busy !== null} onClick={() => setPending({ title: user.equalVoter ? (ru ? 'Исключить из равного голосования?' : 'Exclude from equal voting?') : (ru ? 'Допустить к равному голосованию?' : 'Admit to equal voting?'), details: ru ? `${user.displayName || shortAddress(user.aptosAddress)}: изменение войдёт только в будущие снапшоты.` : `${user.displayName || shortAddress(user.aptosAddress)}: the change affects future snapshots only.`, run: () => submit('admin_election', user.equalVoter ? 'unregister_equal_voter' : 'register_equal_voter', [user.aptosAddress], `voter-${user.id}`) })}>{user.equalVoter ? (ru ? 'Исключить' : 'Exclude') : (ru ? 'Допустить' : 'Admit')}</button>
+            <button className={`btn small ${user.equalVoter ? 'danger' : 'primary'}`} disabled={busy !== null} onClick={() => setPending({ title: user.equalVoter ? (ru ? 'Исключить из равного голосования?' : 'Exclude from equal voting?') : (ru ? 'Допустить к равному голосованию?' : 'Admit to equal voting?'), details: ru ? `${user.displayName || shortAddress(user.aptosAddress)}: изменение войдёт только в будущие снапшоты.` : `${user.displayName || shortAddress(user.aptosAddress)}: the change affects future snapshots only.`, run: () => submit('admin_election', user.equalVoter ? 'unregister_equal_voter' : 'register_equal_voter', [user.aptosAddress], `voter-${user.id}`), danger: user.equalVoter })}>{user.equalVoter ? (ru ? 'Исключить' : 'Exclude') : (ru ? 'Допустить' : 'Admit')}</button>
           </div>)}
         </div>
       </Panel>
@@ -264,7 +267,7 @@ function AdminMembershipContent({ governance }: { governance: GovernanceAdminSta
     </Panel>
 
     {pending && <div className="governance-confirm" role="dialog" aria-modal="true" aria-labelledby="governance-confirm-title">
-      <div className="governance-confirm__body"><strong id="governance-confirm-title">{pending.title}</strong><p>{pending.details}</p><div className="row"><button className="btn" onClick={() => setPending(null)}>{ru ? 'Отмена' : 'Cancel'}</button><button className="btn danger" onClick={() => { const action = pending.run; setPending(null); void action() }}>{ru ? 'Подтвердить' : 'Confirm'}</button></div></div>
+      <div className="governance-confirm__body"><strong id="governance-confirm-title">{pending.title}</strong><p>{pending.details}</p><div className="row"><button className="btn" onClick={() => setPending(null)}>{ru ? 'Отмена' : 'Cancel'}</button><button autoFocus className={`btn ${pending.danger ? 'danger' : 'primary'}`} onClick={() => { const action = pending.run; setPending(null); void action() }}>{ru ? 'Подтвердить' : 'Confirm'}</button></div></div>
     </div>}
     {message && <div className={`callout ${explorer ? 'lime' : 'cyan'}`} role={explorer ? 'status' : 'alert'} aria-live="polite">{message}{explorer && <> · <a href={explorer} target="_blank" rel="noreferrer">Aptos Explorer ↗</a></>}</div>}
   </div>
