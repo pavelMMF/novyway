@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "sovet-online-document-anchor-v1",
+  "documentId": "draft-law-peoples-militia",
+  "documentKey": "0x11c2cd37418d08c3385a7915bbc6199ba95d99022ffede4fa1e445ddf749f91a",
+  "version": "2026-07-14",
+  "title": "Проект федерального закона «О Народной милиции»",
+  "kind": "draft-law",
+  "primaryTopic": "civil-organizations",
+  "secondaryTopics": [
+    "law",
+    "public-safety"
+  ],
+  "sourceArchive": {
+    "fileName": "Новый Путь-20260714T184622Z-1-001.zip",
+    "sha256": "0xfd9ca58a3374ccf89c81bdd20f6845d407c538d4962121fe81ad7a874ef2d990"
+  },
+  "originalPath": "Возможные Гражданские организации/Федеральный_закон_О_Народной_милиции.docx",
+  "publicUrl": "/documents/original/draft-law-peoples-militia.docx",
+  "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "bytes": 14080,
+  "contentSha256": "0x699c86b43102e482f4d93497d120fb5578e4da53ccbd7b73a20bc0fe3b9afcea"
+}

@@ -1,0 +1,147 @@
+{
+  "schemaVersion": "sovet-online-document-anchor-v1",
+  "registryGeneration": 1,
+  "network": "aptos-testnet",
+  "packageAddress": "0xdd2c843725904c661a3b592e84a6794dbe2076e947b045cdc55b8cd7d4cb0411",
+  "sourceArchive": {
+    "fileName": "Новый Путь-20260714T184622Z-1-001.zip",
+    "sha256": "0xfd9ca58a3374ccf89c81bdd20f6845d407c538d4962121fe81ad7a874ef2d990"
+  },
+  "documents": [
+    {
+      "schemaVersion": "sovet-online-document-anchor-v1",
+      "documentId": "nsbv-charter",
+      "documentKey": "0x13a8107c83d43119f3c613d10e9ee4c7268b3aab67a7d28a994aebfde23e0b2d",
+      "version": "2026-07-14",
+      "title": "Устав Независимого Совета баланса властей",
+      "kind": "charter",
+      "primaryTopic": "governance",
+      "secondaryTopics": [
+        "constitutional-design",
+        "public-institutions"
+      ],
+      "sourceArchive": {
+        "fileName": "Новый Путь-20260714T184622Z-1-001.zip",
+        "sha256": "0xfd9ca58a3374ccf89c81bdd20f6845d407c538d4962121fe81ad7a874ef2d990"
+      },
+      "originalPath": "Баланс Власти/Устав_НСБВ.docx",
+      "publicUrl": "/documents/original/nsbv-charter.docx",
+      "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "bytes": 1238631,
+      "contentSha256": "0xffa9313a5787c705b7e611d9f61cf6534321524e91f239e0b2e0d694336a544c",
+      "metadataUrl": "/documents/anchors/nsbv-charter.json",
+      "metadataUri": "sovet-online://documents/anchors/nsbv-charter.json",
+      "metadataSha256": "0x4b54b211c485440fc07fc96cbd100d5f6b802f5ffd7015bda32c20d7999c2220",
+      "parentContentSha256": "0x",
+      "recoveryBundleSha256": "0x"
+    },
+    {
+      "schemaVersion": "sovet-online-document-anchor-v1",
+      "documentId": "draft-law-peoples-militia",
+      "documentKey": "0x11c2cd37418d08c3385a7915bbc6199ba95d99022ffede4fa1e445ddf749f91a",
+      "version": "2026-07-14",
+      "title": "Проект федерального закона «О Народной милиции»",
+      "kind": "draft-law",
+      "primaryTopic": "civil-organizations",
+      "secondaryTopics": [
+        "law",
+        "public-safety"
+      ],
+      "sourceArchive": {
+        "fileName": "Новый Путь-20260714T184622Z-1-001.zip",
+        "sha256": "0xfd9ca58a3374ccf89c81bdd20f6845d407c538d4962121fe81ad7a874ef2d990"
+      },
+      "originalPath": "Возможные Гражданские организации/Федеральный_закон_О_Народной_милиции.docx",
+      "publicUrl": "/documents/original/draft-law-peoples-militia.docx",
+      "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "bytes": 14080,
+      "contentSha256": "0x699c86b43102e482f4d93497d120fb5578e4da53ccbd7b73a20bc0fe3b9afcea",
+      "metadataUrl": "/documents/anchors/draft-law-peoples-militia.json",
+      "metadataUri": "sovet-online://documents/anchors/draft-law-peoples-militia.json",
+      "metadataSha256": "0xb94cf0ee8794da56453fbf9245286462667f129d836b820745ef8190c6cc7785",
+      "parentContentSha256": "0x",
+      "recoveryBundleSha256": "0x"
+    },
+    {
+      "schemaVersion": "sovet-online-document-anchor-v1",
+      "documentId": "voting-weight-calculator",
+      "documentKey": "0x397f75f8214002dfe9472762d4459e378de5e7a64e3443d11bf1e67612a8b95f",
+      "version": "2026-07-14",
+      "title": "Калькулятор весов голосов",
+      "kind": "calculation-model",
+      "primaryTopic": "voting-system",
+      "secondaryTopics": [
+        "mathematics",
+        "qualification-weights"
+      ],
+      "sourceArchive": {
+        "fileName": "Новый Путь-20260714T184622Z-1-001.zip",
+        "sha256": "0xfd9ca58a3374ccf89c81bdd20f6845d407c538d4962121fe81ad7a874ef2d990"
+      },
+      "originalPath": "Голоса/Калькулятор Весов.xlsx",
+      "publicUrl": "/documents/original/voting-weight-calculator.xlsx",
+      "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "bytes": 24786,
+      "contentSha256": "0x9e68a5adb14e2cacbe837563c6d349809305f0953f4a847a958290363540dbe7",
+      "metadataUrl": "/documents/anchors/voting-weight-calculator.json",
+      "metadataUri": "sovet-online://documents/anchors/voting-weight-calculator.json",
+      "metadataSha256": "0xd602ca8d161afdbd7405db5de13b0cf1f737fd1ec941ea5d487632a1ab08a302",
+      "parentContentSha256": "0x",
+      "recoveryBundleSha256": "0x"
+    },
+    {
+      "schemaVersion": "sovet-online-document-anchor-v1",
+      "documentId": "voting-system-council-charter",
+      "documentKey": "0xfb32f3f012baebe71b42cb2634a464459e48047ab72b24c4963d7b18ab56cea6",
+      "version": "2026-07-14",
+      "title": "Устав Совета по управлению системой голосов",
+      "kind": "charter",
+      "primaryTopic": "voting-system",
+      "secondaryTopics": [
+        "governance",
+        "qualifications"
+      ],
+      "sourceArchive": {
+        "fileName": "Новый Путь-20260714T184622Z-1-001.zip",
+        "sha256": "0xfd9ca58a3374ccf89c81bdd20f6845d407c538d4962121fe81ad7a874ef2d990"
+      },
+      "originalPath": "Голоса/Устав Совета по управлению системой голосов.docx",
+      "publicUrl": "/documents/original/voting-system-council-charter.docx",
+      "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "bytes": 11358,
+      "contentSha256": "0xccbdac202d08f4ddc80c616af2ea68a407222920eb7ce4f2672eb86d07391a52",
+      "metadataUrl": "/documents/anchors/voting-system-council-charter.json",
+      "metadataUri": "sovet-online://documents/anchors/voting-system-council-charter.json",
+      "metadataSha256": "0x1830d66f8c3c31e8a5fe05f1140e1606e8d2402b308c51e388b48f3d4d311630",
+      "parentContentSha256": "0x",
+      "recoveryBundleSha256": "0x"
+    },
+    {
+      "schemaVersion": "sovet-online-document-anchor-v1",
+      "documentId": "vote-weight-methodology",
+      "documentKey": "0x4069658b3ddacb47fe86ecaaa1fde2f902281462dfd892c3af1d4df1fda076a8",
+      "version": "2026-07-14",
+      "title": "Формирование суммы голосов в цифровой меритократической системе",
+      "kind": "methodology",
+      "primaryTopic": "voting-system",
+      "secondaryTopics": [
+        "methodology",
+        "qualification-weights"
+      ],
+      "sourceArchive": {
+        "fileName": "Новый Путь-20260714T184622Z-1-001.zip",
+        "sha256": "0xfd9ca58a3374ccf89c81bdd20f6845d407c538d4962121fe81ad7a874ef2d990"
+      },
+      "originalPath": "Голоса/Формирование Голоса Объяснение.docx",
+      "publicUrl": "/documents/original/vote-weight-methodology.docx",
+      "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "bytes": 11191,
+      "contentSha256": "0xa60b2534a635037626c39e61a92b06ba1b141240f7915e5cc34c88c98dc0f71b",
+      "metadataUrl": "/documents/anchors/vote-weight-methodology.json",
+      "metadataUri": "sovet-online://documents/anchors/vote-weight-methodology.json",
+      "metadataSha256": "0xcae2ab79de8c893f5889ae843c4bf0d94beb1f274741398d2717cf85e92bf201",
+      "parentContentSha256": "0x",
+      "recoveryBundleSha256": "0x"
+    }
+  ]
+}

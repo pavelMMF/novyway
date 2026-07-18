@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "sovet-online-document-anchor-v1",
+  "documentId": "voting-weight-calculator",
+  "documentKey": "0x397f75f8214002dfe9472762d4459e378de5e7a64e3443d11bf1e67612a8b95f",
+  "version": "2026-07-14",
+  "title": "Калькулятор весов голосов",
+  "kind": "calculation-model",
+  "primaryTopic": "voting-system",
+  "secondaryTopics": [
+    "mathematics",
+    "qualification-weights"
+  ],
+  "sourceArchive": {
+    "fileName": "Новый Путь-20260714T184622Z-1-001.zip",
+    "sha256": "0xfd9ca58a3374ccf89c81bdd20f6845d407c538d4962121fe81ad7a874ef2d990"
+  },
+  "originalPath": "Голоса/Калькулятор Весов.xlsx",
+  "publicUrl": "/documents/original/voting-weight-calculator.xlsx",
+  "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "bytes": 24786,
+  "contentSha256": "0x9e68a5adb14e2cacbe837563c6d349809305f0953f4a847a958290363540dbe7"
+}

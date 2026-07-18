@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "sovet-online-document-anchor-v1",
+  "documentId": "voting-system-council-charter",
+  "documentKey": "0xfb32f3f012baebe71b42cb2634a464459e48047ab72b24c4963d7b18ab56cea6",
+  "version": "2026-07-14",
+  "title": "Устав Совета по управлению системой голосов",
+  "kind": "charter",
+  "primaryTopic": "voting-system",
+  "secondaryTopics": [
+    "governance",
+    "qualifications"
+  ],
+  "sourceArchive": {
+    "fileName": "Новый Путь-20260714T184622Z-1-001.zip",
+    "sha256": "0xfd9ca58a3374ccf89c81bdd20f6845d407c538d4962121fe81ad7a874ef2d990"
+  },
+  "originalPath": "Голоса/Устав Совета по управлению системой голосов.docx",
+  "publicUrl": "/documents/original/voting-system-council-charter.docx",
+  "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "bytes": 11358,
+  "contentSha256": "0xccbdac202d08f4ddc80c616af2ea68a407222920eb7ce4f2672eb86d07391a52"
+}

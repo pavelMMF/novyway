@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "sovet-online-document-anchor-v1",
+  "packageAddress": "0xdd2c843725904c661a3b592e84a6794dbe2076e947b045cdc55b8cd7d4cb0411",
+  "module": "document_anchor",
+  "manifestSha256": "0xa24c97f00d57c4ea60416a4e44355e598f86490e8e1a5acfaee52589ac0c282e",
+  "documents": [
+    {
+      "documentId": "testnet-generation-1-proof",
+      "documentKey": "0x5e13d8e27139489695ba97b77a80baa3a798f86bfe0d94ab2775ccdc460d0189",
+      "contentHash": "0x36dc0c233ea9f490f1900e8d7949ce2fb44f0e56baddcbfa663fefddfb0a136f",
+      "parentContentHash": "0x",
+      "metadataHash": "0x416a3e27f36a50b978059c7daf831545ed3b348778f8cde61ee910a6457fab27",
+      "recoveryBundleHash": "0x",
+      "contentBytes": 4944,
+      "mimeType": "application/json",
+      "metadataUri": "sovet-online://documents/anchors/testnet-generation-1-proof.json",
+      "version": "2026-07-14"
+    }
+  ]
+}

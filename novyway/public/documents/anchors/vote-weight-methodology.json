@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "sovet-online-document-anchor-v1",
+  "documentId": "vote-weight-methodology",
+  "documentKey": "0x4069658b3ddacb47fe86ecaaa1fde2f902281462dfd892c3af1d4df1fda076a8",
+  "version": "2026-07-14",
+  "title": "Формирование суммы голосов в цифровой меритократической системе",
+  "kind": "methodology",
+  "primaryTopic": "voting-system",
+  "secondaryTopics": [
+    "methodology",
+    "qualification-weights"
+  ],
+  "sourceArchive": {
+    "fileName": "Новый Путь-20260714T184622Z-1-001.zip",
+    "sha256": "0xfd9ca58a3374ccf89c81bdd20f6845d407c538d4962121fe81ad7a874ef2d990"
+  },
+  "originalPath": "Голоса/Формирование Голоса Объяснение.docx",
+  "publicUrl": "/documents/original/vote-weight-methodology.docx",
+  "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "bytes": 11191,
+  "contentSha256": "0xa60b2534a635037626c39e61a92b06ba1b141240f7915e5cc34c88c98dc0f71b"
+}

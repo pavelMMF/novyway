@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "sovet-online-document-anchor-v1",
+  "documentId": "testnet-generation-1-proof",
+  "documentKey": "0x5e13d8e27139489695ba97b77a80baa3a798f86bfe0d94ab2775ccdc460d0189",
+  "version": "2026-07-14",
+  "title": "Aptos Testnet: доказательный пакет поколения 1",
+  "kind": "audit-log",
+  "primaryTopic": "governance",
+  "secondaryTopics": [
+    "testnet",
+    "recovery",
+    "document-registry"
+  ],
+  "originalPath": "document-registry/proofs/testnet-generation-1-proof.json",
+  "publicUrl": "/documents/proofs/testnet-generation-1-proof.json",
+  "mimeType": "application/json",
+  "bytes": 4944,
+  "contentSha256": "0x36dc0c233ea9f490f1900e8d7949ce2fb44f0e56baddcbfa663fefddfb0a136f"
+}

@@ -1,0 +1,42 @@
+# Local tools, caches and generated output
+.tools/
+.pnpm-store/
+.agents/
+.mplconfig/
+.tmp/
+.venv*/
+NI99-Signal-project/
+**/task_plan.md
+**/findings.md
+**/progress.md
+**/node_modules/
+**/dist/
+**/dist-*/
+**/build/
+**/.runtime/
+**/.playwright-cli/
+**/release/
+**/output/
+**/logs/
+*.log
+*.tmp
+
+# Secrets and machine-local configuration
+**/.aptos/
+**/.env
+**/.env.*
+!**/.env.example
+*.local
+
+# Large local-only media and generated launchers
+novyway/media/music/
+novyway/*.exe
+*.zip
+
+# OS and editor state
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.suo
+*.user

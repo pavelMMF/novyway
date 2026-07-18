@@ -1,0 +1,51 @@
+{
+  "name": "novyway",
+  "private": true,
+  "version": "0.0.0",
+  "packageManager": "pnpm@10.13.1",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "oxlint",
+    "verify:recovery": "node server/Verify-Recovery.mjs",
+    "verify:credentials": "node server/Verify-Credentials.mjs",
+    "verify:session": "node server/Verify-Session-Persistence.mjs",
+    "verify:siwa": "node server/Verify-SIWA-Challenge.mjs",
+    "verify:sponsored-intent": "node server/Verify-Sponsored-Intent.mjs",
+    "verify:logic": "node server/Verify-Logic-Game.mjs",
+    "verify:logic:storage": "node server/Verify-Logic-Game-Storage.mjs",
+    "verify:creator": "node server/Verify-Creator-Account.mjs",
+    "preflight:creator": "node server/Preflight-Creator-Account.mjs",
+    "preview": "vite preview",
+    "build:single": "vite build --config vite.singlefile.config.ts"
+  },
+  "dependencies": {
+    "@aptos-labs/siwa": "^0.5.2",
+    "@aptos-labs/ts-sdk": "5.2.1",
+    "@aptos-labs/wallet-adapter-react": "^8.3.3",
+    "@fontsource/fira-code": "^5.2.7",
+    "@fontsource/fira-sans": "^5.2.7",
+    "@fontsource/unbounded": "^5.2.8",
+    "@types/three": "^0.185.1",
+    "nodemailer": "^9.0.1",
+    "pg": "^8.16.3",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "react-router": "7.18.1",
+    "react-router-dom": "7.18.1",
+    "three": "^0.185.1",
+    "vite-plugin-singlefile": "^2.3.3",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.2",
+    "@types/pg": "^8.15.5",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.3",
+    "oxlint": "^1.71.0",
+    "typescript": "~6.0.2",
+    "vite": "^8.1.1"
+  }
+}

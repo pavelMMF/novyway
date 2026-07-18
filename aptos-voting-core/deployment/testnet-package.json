@@ -1,0 +1,13 @@
+{
+  "network": "testnet",
+  "chainId": 2,
+  "address": "0xdd2c843725904c661a3b592e84a6794dbe2076e947b045cdc55b8cd7d4cb0411",
+  "package": "AptosVotingCore",
+  "upgradeNumber": 2,
+  "sourceDigest": "120BF272B9879B1FCF8FA97B6124EFD2A55E028D306A881AEE1ABCC8356E5516",
+  "moduleSha256": {
+    "weighted_voting": "ca8277cbbffdde01a0c8d3282fa4ed7458bdcd129503e64ab098b39a7c2d4049",
+    "admin_election": "c07c4c1389caa1fb056ed04977858cf2be4dc67a8fd148f43f7f701ace4d3641",
+    "document_anchor": "e350de3ccde2ed52170ed682d4e898cb6d5bec6ebb4fe9d3bb971a81491411ef"
+  }
+}

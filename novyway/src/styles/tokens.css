@@ -1,0 +1,94 @@
+/* ============================================================
+   Новый Путь — дизайн-токены
+   Светлый футуризм · конструктивистская дисциплина ·
+   мягкий cyberpunk/soviet-wave с умеренными красными закладными
+   ============================================================ */
+
+:root {
+  /* Базовая палитра из handoff */
+  --bg: #e9eeeb;
+  --surface: #f8faf7;
+  --ink: #111816;
+  --ink-2: #66716d;
+  --red: #e64232;
+  --cyan: #00a9bd;
+  --lime: #b9db00;
+  --yellow: #efb31e;
+
+  /* Производные */
+  --red-deep: #b52d20;
+  --red-tint: rgba(230, 66, 50, 0.07);
+  --red-tint-2: rgba(230, 66, 50, 0.13);
+  --cyan-tint: rgba(0, 169, 189, 0.09);
+  --lime-tint: rgba(151, 178, 0, 0.14);
+  --lime-ink: #5d7000;
+  --yellow-tint: rgba(239, 179, 30, 0.14);
+  --yellow-ink: #8a6403;
+  --cyan-ink: #006f7b;
+  --focus: #006773;
+
+  --border: #ccd6d0;
+  --border-strong: #a9b6af;
+  --shadow: 0 1px 2px rgba(17, 24, 22, 0.05), 0 4px 14px rgba(17, 24, 22, 0.06);
+  --shadow-lift: 0 2px 6px rgba(17, 24, 22, 0.08), 0 10px 28px rgba(17, 24, 22, 0.1);
+
+  /* Цветовые коды категорий (граф, чипы, документы) */
+  --cat-economy: #e64232;   /* Экономика — сигнальный красный */
+  --cat-tech: #00a9bd;      /* Технологии — системный cyan */
+  --cat-law: #7b5ea7;       /* Право — фиолетовый */
+  --cat-ecology: #679b1e;   /* Экология — зелёный */
+  --cat-education: #efb31e; /* Образование — жёлтый */
+
+  /* Геометрия */
+  --r: 8px;
+  --r-s: 5px;
+  --touch: 44px;
+
+  /* Типографика */
+  --font-ui: 'Fira Sans', 'Segoe UI', system-ui, sans-serif;
+  --font-code: 'Fira Code', ui-monospace, 'Cascadia Mono', monospace;
+  --font-display: 'Unbounded', 'Fira Sans', system-ui, sans-serif;
+
+  /* Золото решений */
+  --gold: #d4a017;
+  --gold-bright: #f2c24b;
+  --gold-deep: #a87b0a;
+  --gold-tint: rgba(212, 160, 23, 0.12);
+
+  /* Motion */
+  --t-fast: 140ms;
+  --t-route: 210ms;
+  --ease: cubic-bezier(0.3, 0.7, 0.25, 1);
+
+  /* Конструктивистская красная штриховка (закладной фон) */
+  --hatch-red: repeating-linear-gradient(
+    -45deg,
+    rgba(230, 66, 50, 0.16) 0 2px,
+    transparent 2px 9px
+  );
+  --hatch-red-soft: repeating-linear-gradient(
+    -45deg,
+    rgba(230, 66, 50, 0.075) 0 2px,
+    transparent 2px 11px
+  );
+}
+
+:root[data-theme='dark'] {
+  --bg: #111715;
+  --surface: #19211e;
+  --ink: #edf3ef;
+  --ink-2: #aab7b1;
+  --border: #33413b;
+  --border-strong: #52625b;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.25), 0 5px 18px rgba(0, 0, 0, 0.22);
+  --shadow-lift: 0 3px 10px rgba(0, 0, 0, 0.32), 0 14px 34px rgba(0, 0, 0, 0.28);
+  --red-tint: rgba(242, 91, 75, 0.12);
+  --red-tint-2: rgba(242, 91, 75, 0.2);
+  --cyan-tint: rgba(21, 190, 209, 0.12);
+  --lime-tint: rgba(185, 219, 0, 0.12);
+  --yellow-tint: rgba(239, 179, 30, 0.12);
+  --lime-ink: #c8e64a;
+  --yellow-ink: #f3c857;
+  --cyan-ink: #3bd2e2;
+  --focus: #52deeb;
+}

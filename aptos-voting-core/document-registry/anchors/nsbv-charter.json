@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "sovet-online-document-anchor-v1",
+  "documentId": "nsbv-charter",
+  "documentKey": "0x13a8107c83d43119f3c613d10e9ee4c7268b3aab67a7d28a994aebfde23e0b2d",
+  "version": "2026-07-14",
+  "title": "Устав Независимого Совета баланса властей",
+  "kind": "charter",
+  "primaryTopic": "governance",
+  "secondaryTopics": [
+    "constitutional-design",
+    "public-institutions"
+  ],
+  "sourceArchive": {
+    "fileName": "Новый Путь-20260714T184622Z-1-001.zip",
+    "sha256": "0xfd9ca58a3374ccf89c81bdd20f6845d407c538d4962121fe81ad7a874ef2d990"
+  },
+  "originalPath": "Баланс Власти/Устав_НСБВ.docx",
+  "publicUrl": "/documents/original/nsbv-charter.docx",
+  "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "bytes": 1238631,
+  "contentSha256": "0xffa9313a5787c705b7e611d9f61cf6534321524e91f239e0b2e0d694336a544c"
+}
