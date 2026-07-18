@@ -1,11 +1,13 @@
 import { NavLink, useLocation } from 'react-router-dom'
 import { useEffect, useState, type ReactNode } from 'react'
-import { useT } from '../../i18n'
+import { useT, shortAddr } from '../../i18n'
 import { sound } from '../../sound/engine'
 import { ToastHost } from '../components'
 import { SignalCircuit } from '../components/SignalCircuit'
 import { IdleSignals } from '../components/IdleSignals'
 import { TimeThreads } from '../components/TimeThreads'
+import { MusicPlayer } from './MusicPlayer'
+import { BrandMark } from './BrandMark'
 import { currentRuntimeMode } from '../../adapters/types'
 import { useAccountSession } from '../../auth/session'
 
@@ -92,7 +94,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <aside className="sidebar">
           <div className="brand">
             <button className="brand-trigger" onClick={() => { setGameOpen(true); sound.play('confirm') }} aria-label={t('nav.game')} title={t('nav.game')}>
-              <span className="brand-mark">{lang === 'ru' ? 'НП' : 'NP'}</span>
+              <span className="brand-mark"><BrandMark /></span>
             </button>
             <NavLink to="/" className="brand-copy brand-home" data-silent onClick={() => sound.play('navigate')}>
               <div className="brand-name">{lang === 'ru' ? 'НОВЫЙ ПУТЬ' : 'NEW PATH'}</div>
@@ -123,14 +125,26 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       <div className="main">
         <div className="mobile-brand-trigger">
-          <button onClick={() => { setGameOpen(true); sound.play('confirm') }} aria-label={t('nav.game')} title={t('nav.game')}><span className="brand-mark">{lang === 'ru' ? 'НП' : 'NP'}</span></button>
+          <button onClick={() => { setGameOpen(true); sound.play('confirm') }} aria-label={t('nav.game')} title={t('nav.game')}><span className="brand-mark"><BrandMark /></span></button>
           <NavLink to="/" data-silent onClick={() => sound.play('navigate')}>{lang === 'ru' ? 'НОВЫЙ ПУТЬ' : 'NEW PATH'}</NavLink>
         </div>
         <header className="topbar app-topbar">
           <div className="spacer" />
+          <MusicPlayer />
           <NavLink to="/profile" className={({ isActive }) => `top-action profile-signal ${user ? 'authenticated' : 'guest'} ${isActive ? 'active' : ''}`} data-silent onClick={() => sound.play('navigate')} title={t('nav.profile')} aria-label={user ? (lang === 'ru' ? 'Открыть личный кабинет' : 'Open profile') : (lang === 'ru' ? 'Войти в аккаунт' : 'Sign in')}>
-            <span className="top-avatar" aria-hidden>{initials}</span>
-            <span className="profile-signal-copy"><span className="top-label">{t('nav.profile')}</span><small>{user ? (lang === 'ru' ? 'личный контур' : 'identity online') : (lang === 'ru' ? 'войти' : 'sign in')}</small></span>
+            <span className="top-avatar" aria-hidden>
+              {user
+                ? <span className="top-avatar-initials">{initials}</span>
+                : <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="8.2" r="3.4" /><path d="M5.5 19.2a6.6 6.6 0 0 1 13 0" /></svg>}
+            </span>
+            <span className="profile-signal-copy">
+              <span className="top-label">{user ? (user.displayName?.trim() || t('nav.profile')) : t('nav.profile')}</span>
+              <small className="profile-signal-status">
+                {user
+                  ? shortAddr(user.activeAptosAddress ?? user.aptosAddress)
+                  : (lang === 'ru' ? 'войти в кабинет' : 'sign in')}
+              </small>
+            </span>
             <span className="profile-signal-dot" aria-hidden />
           </NavLink>
           <NavLink to="/settings" className={({ isActive }) => `top-action icon-only ${isActive ? 'active' : ''}`} data-silent onClick={() => sound.play('navigate')} aria-label={t('nav.settings')} title={t('nav.settings')}>
