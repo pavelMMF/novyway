@@ -1,30 +1,14 @@
-import { useEffect, useState } from 'react'
 import { useT } from '../i18n'
 import { useSettings } from '../demo/store'
 import { PageHead, Panel, Switch } from '../ui/components'
 import { sound } from '../sound/engine'
-import { music, type MusicStatus } from '../sound/music'
+import { music } from '../sound/music'
+import { useMusic } from '../sound/useMusic'
 
 export default function Settings() {
   const { t } = useT()
   const { s, update } = useSettings()
-  const [musicStatus, setMusicStatus] = useState<MusicStatus>(music.status)
-  const [musicStarting, setMusicStarting] = useState(false)
-  useEffect(() => music.subscribe(() => setMusicStatus(music.status)), [])
-
-  async function toggleMusic(enabled: boolean) {
-    if (musicStarting) return
-    update({ musicOn: enabled })
-    if (!enabled) {
-      music.pause()
-      return
-    }
-    sound.stopIdleAmbience()
-    setMusicStarting(true)
-    const started = await music.play()
-    setMusicStarting(false)
-    if (!started) update({ musicOn: false })
-  }
+  const { status: musicStatus, starting: musicStarting, setEnabled: setMusicEnabled } = useMusic()
 
   return (
     <>
@@ -69,7 +53,7 @@ export default function Settings() {
           <div className="stack">
             <Switch
               checked={s.musicOn && musicStatus === 'playing'}
-              onChange={(value) => void toggleMusic(value)}
+              onChange={(value) => void setMusicEnabled(value)}
               label={musicStarting ? (s.lang === 'ru' ? 'Запускаем музыку…' : 'Starting music…') : musicStatus === 'playing' ? (s.lang === 'ru' ? 'Музыка играет' : 'Music is playing') : (s.lang === 'ru' ? 'Включить музыку' : 'Enable music')}
             />
             <label className="field" style={{ maxWidth: 260 }}>
@@ -77,9 +61,9 @@ export default function Settings() {
               <input type="range" min={0} max={100} value={s.musicVolume * 100} style={{ ['--fill' as string]: `${s.musicVolume * 100}%` }} onChange={(event) => update({ musicVolume: Number(event.target.value) / 100 })} />
             </label>
             {music.currentTrack && <div className="mono muted">{music.currentTrack.title}</div>}
-            {musicStatus === 'unavailable' && <div className="callout yellow">{s.lang === 'ru' ? 'На публичном сайте коммерческий плейлист выключен до получения прав. Локально он доступен через localhost.' : 'The commercial playlist is disabled publicly until distribution rights are cleared. It remains available on localhost.'}</div>}
+            {musicStatus === 'unavailable' && <div className="callout yellow">{s.lang === 'ru' ? 'Музыка недоступна в этом окружении.' : 'Music is unavailable in this environment.'}</div>}
             {musicStatus === 'error' && <div className="callout red">{music.error}</div>}
-            {music.localPreview && <p className="muted">{s.lang === 'ru' ? 'Локальное предпрослушивание: семь треков идут по порядку, загружается только текущий, переход длится 6 секунд.' : 'Local preview: seven tracks play in order, only the current track is streamed, with a six-second crossfade.'}</p>}
+            {music.localPreview && <p className="muted">{s.lang === 'ru' ? 'Локальный предпросмотр: семь треков идут по порядку, загружается только текущий, переход длится 6 секунд.' : 'Local preview: seven tracks play in order, only the current track is streamed, with a six-second crossfade.'}</p>}
           </div>
         </Panel>
 

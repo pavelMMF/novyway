@@ -1,20 +1,24 @@
+# Re-normalizes the site's own tracks (Media/music) to a consistent -18 LUFS
+# loudness before they're served from media/music. Optional: the files that
+# ship today are already close to this target, so re-run only if you drop in
+# new masters.
 param(
   [string]$Ffmpeg = "C:\Users\lolip\OneDrive\Documents\New project 2\.tools\ffmpeg\ffmpeg.exe",
-  [string]$Source = "C:\Users\lolip\Downloads"
+  [string]$Source = (Join-Path $PSScriptRoot '..\media\music')
 )
 
 $ErrorActionPreference = 'Stop'
-$destination = Join-Path $PSScriptRoot '..\.runtime\music'
+$destination = Join-Path $PSScriptRoot '..\.runtime\music-normalized'
 New-Item -ItemType Directory -Force -Path $destination | Out-Null
 
 $tracks = @(
-  @{ In = '01_Instrument of Surrender.mp3'; Out = '01-instrument-of-surrender.m4a' },
-  @{ In = '02_Whirling-In-Rags, 8 AM.mp3'; Out = '02-whirling-in-rags-8-am.m4a' },
-  @{ In = '03_Detective Arriving on the Scene.mp3'; Out = '03-detective-arriving-on-the-scene.m4a' },
-  @{ In = '06_Precinct 41 Major Crime Unit.mp3'; Out = '06-precinct-41-major-crime-unit.m4a' },
-  @{ In = '08_Polyhedrons.mp3'; Out = '08-polyhedrons.m4a' },
-  @{ In = '15_Whirling-In-Rags, 8 PM.mp3'; Out = '15-whirling-in-rags-8-pm.m4a' },
-  @{ In = 'Starfall - Sovietwave Mix.mp3'; Out = 'starfall-sovietwave-mix.mp3'; Codec = 'mp3' }
+  @{ In = '01.m4a'; Out = '01.m4a' },
+  @{ In = '02.m4a'; Out = '02.m4a' },
+  @{ In = '03.m4a'; Out = '03.m4a' },
+  @{ In = '04.m4a'; Out = '04.m4a' },
+  @{ In = '05.m4a'; Out = '05.m4a' },
+  @{ In = '06.m4a'; Out = '06.m4a' },
+  @{ In = '07.mp3'; Out = '07.mp3'; Codec = 'mp3' }
 )
 
 foreach ($track in $tracks) {

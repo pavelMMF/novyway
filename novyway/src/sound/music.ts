@@ -17,12 +17,15 @@ class BackgroundMusic {
   private _status: MusicStatus = 'loading'
   private _error: string | null = null
   private _localPreview = false
+  private _muted = false
   volume = 0.65
 
   get status() { return this._status }
   get error() { return this._error }
   get localPreview() { return this._localPreview }
   get isPlaying() { return this._status === 'playing' }
+  get muted() { return this._muted }
+  get trackCount() { return this.tracks.length }
   get currentTrack() { return this.tracks[this.trackIndex] ?? null }
 
   subscribe(listener: Listener) {
@@ -77,6 +80,8 @@ class BackgroundMusic {
   }
 
   private targetVolume() {
+    if (this._muted) return 0
+    // Keep background music deliberately quiet: quarter of the slider value.
     return Math.max(0, Math.min(1, this.volume)) * 0.25
   }
 
@@ -84,6 +89,46 @@ class BackgroundMusic {
     this.volume = Math.max(0, Math.min(1, value))
     if (!this.players) return
     this.players[this.active].volume = this.targetVolume()
+  }
+
+  setMuted(value: boolean) {
+    if (this._muted === value) return
+    this._muted = value
+    if (this.players) this.players[this.active].volume = this.targetVolume()
+    this.emit()
+  }
+
+  toggleMute() {
+    this.setMuted(!this._muted)
+    return this._muted
+  }
+
+  /** Immediately jump to the next track with a short fade, without waiting for the crossfade window. */
+  async skipNext() {
+    if (!this.prepared) await this.prepare()
+    if (this.tracks.length === 0) return false
+    const players = this.ensurePlayers()
+    this.crossfading = false
+    const generation = ++this.playbackGeneration
+    const current = players[this.active]
+    const next = players[1 - this.active]
+    this.trackIndex = (this.trackIndex + 1) % this.tracks.length
+    next.src = this.tracks[this.trackIndex].url
+    next.preload = 'auto'
+    next.volume = this.targetVolume()
+    try {
+      await next.play()
+      if (generation !== this.playbackGeneration) { next.pause(); return false }
+      current.pause()
+      current.removeAttribute('src')
+      current.load()
+      this.active = 1 - this.active
+      this.emit('playing')
+      return true
+    } catch (error) {
+      this.emit('error', error instanceof Error ? error.message : 'skip_failed')
+      return false
+    }
   }
 
   async play() {

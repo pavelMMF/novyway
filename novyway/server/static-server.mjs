@@ -122,16 +122,20 @@ const mimeTypes = {
   '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
 }
 
+// Background-music module: edit the playlist below and flip PUBLIC_MUSIC_ENABLED
+// to control what plays site-wide. Files are read from media/music/<file>, so
+// adding/removing/renaming a track here must match what's actually in that folder.
+const PUBLIC_MUSIC_ENABLED = true
 const musicTracks = [
-  ['01-instrument-of-surrender.m4a', 'Instrument of Surrender'],
-  ['02-whirling-in-rags-8-am.m4a', 'Whirling-In-Rags, 8 AM'],
-  ['03-detective-arriving-on-the-scene.m4a', 'Detective Arriving on the Scene'],
-  ['06-precinct-41-major-crime-unit.m4a', 'Precinct 41 Major Crime Unit'],
-  ['08-polyhedrons.m4a', 'Polyhedrons'],
-  ['15-whirling-in-rags-8-pm.m4a', 'Whirling-In-Rags, 8 PM'],
-  ['starfall-sovietwave-mix.mp3', 'Starfall — Sovietwave Mix'],
+  ['01.m4a', 'Трек 1'],
+  ['02.m4a', 'Трек 2'],
+  ['03.m4a', 'Трек 3'],
+  ['04.m4a', 'Трек 4'],
+  ['05.m4a', 'Трек 5'],
+  ['06.m4a', 'Трек 6'],
+  ['07.mp3', 'Трек 7'],
 ]
-const publicMusicEnabled = process.env.MUSIC_PUBLIC_ENABLED === '1'
+const publicMusicEnabled = PUBLIC_MUSIC_ENABLED
 
 function musicAllowed(request) {
   const hostHeader = (request.headers.host ?? '').toLowerCase()
@@ -139,12 +143,17 @@ function musicAllowed(request) {
 }
 
 function sendRangedFile(request, response, filePath) {
-  const size = statSync(filePath).size
+  const stat = statSync(filePath)
+  const size = stat.size
   const range = request.headers.range
   const headers = {
     'Content-Type': mimeTypes[extname(filePath).toLowerCase()] ?? 'application/octet-stream',
     'Accept-Ranges': 'bytes',
-    'Cache-Control': 'private, max-age=86400',
+    // Cache per URL, but let the browser revalidate so a replaced track file is
+    // never served stale. The playlist URLs also carry an ?v=<mtime> tag, so a
+    // changed file gets a fresh URL and can't collide with the cached bytes.
+    'Cache-Control': 'private, max-age=86400, must-revalidate',
+    'Last-Modified': stat.mtime.toUTCString(),
     ...securityHeaders,
   }
   if (!range) {
@@ -411,13 +420,14 @@ async function handlePublicApi(request, response, url) {
     const tracks = allowed ? musicTracks.filter(([file]) => existsSync(join(musicRoot, file))).map(([file, title], index) => ({
       id: index + 1,
       title,
-      url: `/media/music/${encodeURIComponent(file)}`,
+      // ?v=<mtime> busts the browser HTTP cache when a track file is replaced.
+      url: `/media/music/${encodeURIComponent(file)}?v=${Math.trunc(statSync(join(musicRoot, file)).mtimeMs)}`,
     })) : []
     return json(response, 200, {
       enabled: tracks.length === musicTracks.length,
       localPreview: !publicMusicEnabled,
       tracks,
-      legalNotice: publicMusicEnabled ? null : 'Local preview only. Public distribution requires music rights.',
+      legalNotice: publicMusicEnabled ? null : 'Local preview only. Set PUBLIC_MUSIC_ENABLED to true in server/static-server.mjs to enable on the public site.',
     }, { 'Cache-Control': 'no-store' })
   }
   if (url.pathname === '/api/config' && request.method === 'GET') {

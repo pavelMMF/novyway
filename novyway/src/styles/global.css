@@ -109,16 +109,11 @@ p { margin: 0.4em 0; }
 .brand-mark {
   width: 30px; height: 30px;
   flex: none;
-  background: var(--red);
-  border-radius: 4px;
-  display: grid;
-  place-items: center;
-  color: #fff;
-  font-family: var(--font-code);
-  font-size: 11px;
-  font-weight: 600;
-  clip-path: polygon(0 0, 100% 0, 100% 78%, 78% 100%, 0 100%);
+  border-radius: 5px;
+  overflow: hidden;
+  display: block;
 }
+.brand-mark svg { display: block; width: 100%; height: 100%; }
 .brand-name { font-family: var(--font-display); font-weight: 700; font-size: 13px; letter-spacing: 0.04em; }
 .brand-sub { font-family: var(--font-code); font-size: 10px; color: var(--ink-2); }
 .brand-copy, .nav-label, .sidebar-foot, .nav-sep {
@@ -322,6 +317,96 @@ p { margin: 0.4em 0; }
   transition: box-shadow var(--t-fast) var(--ease);
 }
 :root[data-theme='dark'] .top-avatar { background: var(--gold); color: #241a02; }
+
+/* --- Кнопка кабинета: конструктивистский узел вместо круга --- */
+.profile-signal .top-avatar {
+  width: 30px; height: 30px;
+  border-radius: var(--r-s);
+  /* тот же срез угла, что у знака бренда — узел единой системы */
+  clip-path: polygon(0 0, 100% 0, 100% 74%, 74% 100%, 0 100%);
+  font-family: var(--font-code);
+  font-size: 11px;
+}
+.profile-signal.authenticated .top-avatar {
+  background: linear-gradient(150deg, var(--red), var(--red-deep));
+  color: #fff;
+}
+.profile-signal.guest .top-avatar {
+  background: var(--surface-2);
+  color: var(--ink-2);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+.profile-signal.active .top-avatar,
+.profile-signal:hover .top-avatar { box-shadow: 0 0 0 2px color-mix(in srgb, var(--cyan) 55%, transparent); }
+.profile-signal-status { font-family: var(--font-code); }
+.profile-signal.authenticated .profile-signal-status { color: var(--cyan-ink); }
+
+/* --- Проигрыватель фоновой музыки в шапке --- */
+.music-player {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  height: 40px;
+  padding: 3px 5px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 78%, transparent);
+  color: var(--ink-2);
+  transition: border-color var(--t-fast) var(--ease), background var(--t-fast) var(--ease);
+}
+.music-player.is-playing { border-color: color-mix(in srgb, var(--cyan) 42%, var(--border)); background: color-mix(in srgb, var(--surface) 90%, var(--cyan-tint)); }
+.music-btn {
+  width: 30px; height: 30px;
+  flex: none;
+  display: grid; place-items: center;
+  border: 0; border-radius: 50%;
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+}
+.music-btn:hover { background: var(--surface-2); color: var(--ink); }
+.music-btn:focus-visible { outline: 0; box-shadow: 0 0 0 2px color-mix(in srgb, var(--cyan) 60%, transparent); }
+.music-btn:disabled { opacity: 0.55; cursor: default; }
+.music-play { color: var(--ink); }
+.music-player.is-playing .music-play { color: var(--cyan-ink); }
+.music-mute[aria-pressed='true'] { color: var(--red); }
+.music-now {
+  display: inline-flex; align-items: center; gap: 7px;
+  max-width: 0; padding: 0;
+  overflow: hidden; opacity: 0;
+  transition: max-width 260ms var(--ease), opacity 200ms var(--ease), padding 200ms var(--ease);
+}
+.music-player.is-playing .music-now,
+.music-player.is-starting .music-now { max-width: 150px; opacity: 1; padding: 0 5px 0 3px; }
+.music-title {
+  max-width: 118px;
+  font-family: var(--font-code); font-size: 11px; font-weight: 500;
+  color: var(--ink-2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.music-eq { display: inline-flex; align-items: flex-end; gap: 2px; height: 14px; }
+.music-eq i {
+  width: 2.5px; height: 4px;
+  border-radius: 1px;
+  background: var(--cyan);
+  transform-origin: bottom;
+}
+.music-player.is-playing .music-eq i { animation: music-eq 920ms var(--ease) infinite; }
+.music-eq i:nth-child(1) { animation-delay: -200ms; }
+.music-eq i:nth-child(2) { animation-delay: -640ms; }
+.music-eq i:nth-child(3) { animation-delay: -80ms; }
+.music-eq i:nth-child(4) { animation-delay: -460ms; }
+.music-player.is-muted .music-eq i { background: var(--ink-2); animation-play-state: paused; height: 5px; }
+@keyframes music-eq { 0%, 100% { height: 3px; } 50% { height: 13px; } }
+:root[data-motion='reduced'] .music-eq i { animation: none !important; height: 8px; }
+@media (max-width: 620px) {
+  .music-player .music-now { display: none; }
+  .music-player { gap: 0; padding: 3px; }
+}
+@media (max-width: 400px) {
+  .music-player .music-next { display: none; }
+}
 
 .content {
   flex: 1;
