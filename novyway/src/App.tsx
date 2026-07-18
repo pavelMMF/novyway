@@ -8,6 +8,7 @@ const Elections = lazy(() => import('./screens/Elections'))
 const ElectionDetail = lazy(() => import('./screens/ElectionDetail'))
 const Documents = lazy(() => import('./screens/Documents'))
 const DocumentDetail = lazy(() => import('./screens/DocumentDetail'))
+const Participants = lazy(() => import('./screens/Participants'))
 const Profile = lazy(() => import('./screens/Profile'))
 const Exams = lazy(() => import('./screens/Exams'))
 const ExamDetail = lazy(() => import('./screens/ExamDetail'))
@@ -29,6 +30,7 @@ export default function App() {
           <Route path="/elections/:id" element={<ElectionDetail />} />
           <Route path="/documents" element={<Documents />} />
           <Route path="/documents/:id" element={<DocumentDetail />} />
+          <Route path="/participants" element={<Participants />} />
           <Route path="/profile" element={<Profile />} />
           <Route path="/exams" element={<Exams />} />
           <Route path="/exams/:id" element={<ExamDetail />} />

@@ -15,12 +15,13 @@ const mainNav = [
   { to: '/', key: 'nav.overview', idx: '01' },
   { to: '/elections', key: 'nav.elections', idx: '02' },
   { to: '/documents', key: 'nav.documents', idx: '03' },
+  { to: '/participants', key: 'nav.participants', idx: '04' },
 ] as const
 
 const serviceNav = [
-  { to: '/exams', key: 'nav.exams', idx: '04' },
-  { to: '/audit', key: 'nav.audit', idx: '05' },
-  { to: '/admin', key: 'nav.admin', idx: '06' },
+  { to: '/exams', key: 'nav.exams', idx: '05' },
+  { to: '/audit', key: 'nav.audit', idx: '06' },
+  { to: '/admin', key: 'nav.admin', idx: '07' },
 ] as const
 
 // Пиктограммы разделов: 18px, stroke = currentcolor, без внешних зависимостей.
@@ -29,6 +30,7 @@ const navIcons: Record<string, ReactNode> = {
   'nav.overview': <svg width="18" height="18" viewBox="0 0 24 24" {...strokeProps}><rect x="3.5" y="3.5" width="7" height="7" rx="1.2" /><rect x="13.5" y="3.5" width="7" height="7" rx="1.2" /><rect x="3.5" y="13.5" width="7" height="7" rx="1.2" /><rect x="13.5" y="13.5" width="7" height="7" rx="1.2" /></svg>,
   'nav.elections': <svg width="18" height="18" viewBox="0 0 24 24" {...strokeProps}><path d="M5 11.5h14l1.5 7a1 1 0 0 1-1 1.2h-15a1 1 0 0 1-1-1.2z" /><path d="M12 3.2v8.3M8.8 6.4 12 3.2l3.2 3.2" /></svg>,
   'nav.documents': <svg width="18" height="18" viewBox="0 0 24 24" {...strokeProps}><path d="M6 3.5h8l4 4v13H6z" /><path d="M14 3.5v4h4M9 12h6M9 15.5h6" /></svg>,
+  'nav.participants': <svg width="18" height="18" viewBox="0 0 24 24" {...strokeProps}><circle cx="8" cy="8" r="3" /><circle cx="17" cy="9" r="2.4" /><path d="M2.8 19c.5-3.5 2.3-5.5 5.2-5.5s4.7 2 5.2 5.5M13.6 14.5c2.7-.5 5.1 1 5.8 4" /></svg>,
   'nav.exams': <svg width="18" height="18" viewBox="0 0 24 24" {...strokeProps}><path d="m12 4 9 4.4-9 4.4-9-4.4z" /><path d="M6.5 10.6v5c0 1.3 2.5 2.9 5.5 2.9s5.5-1.6 5.5-2.9v-5" /></svg>,
   'nav.audit': <svg width="18" height="18" viewBox="0 0 24 24" {...strokeProps}><path d="M7 3.5h10v17l-2.5-1.6L12 20.5l-2.5-1.6L7 20.5z" /><path d="M10 8h4.5M10 11.5h4.5" /></svg>,
   'nav.admin': <svg width="18" height="18" viewBox="0 0 24 24" {...strokeProps}><path d="M12 3.5 19 6v5.4c0 4.4-3 8-7 9.1-4-1.1-7-4.7-7-9.1V6z" /><path d="m9.3 11.8 2 2 3.6-3.9" /></svg>,

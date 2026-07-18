@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
+import { recordExamPassed } from '../adapters/participants'
+import { useAccountSession } from '../auth/session'
 import { useT } from '../i18n'
 import { ME, exams, nextTxHash, useStore } from '../demo/store'
 import { CatChip, Lvl, PageHead, Panel } from '../ui/components'
@@ -11,6 +13,7 @@ export default function ExamDetail() {
   const { id } = useParams()
   const { t, l, lang } = useT()
   const { state, dispatch } = useStore()
+  const { user } = useAccountSession()
   const [answers, setAnswers] = useState<Record<string, ExamAnswer>>({})
   const [numericDrafts, setNumericDrafts] = useState<Record<string, string>>({})
   const [cursor, setCursor] = useState(0)
@@ -63,6 +66,9 @@ export default function ExamDetail() {
     setResult(attempt)
     setReviewing(false)
     sound.play(scored.passed ? 'receipt' : 'warning')
+    if (scored.passed && user?.csrfToken) {
+      void recordExamPassed(exam.id, Math.round(scored.scoreShare * 10_000), user.csrfToken).catch(() => undefined)
+    }
   }
 
   return (

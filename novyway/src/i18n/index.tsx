@@ -9,6 +9,7 @@ const dict = {
   'nav.overview': { ru: 'Обзор', en: 'Overview' },
   'nav.elections': { ru: 'Голосования', en: 'Elections' },
   'nav.documents': { ru: 'Документы', en: 'Documents' },
+  'nav.participants': { ru: 'Участники', en: 'Participants' },
   'nav.graph': { ru: 'Граф', en: 'Graph' },
   'nav.game': { ru: 'Сигнал', en: 'Signal' },
   'nav.more': { ru: 'Ещё', en: 'More' },

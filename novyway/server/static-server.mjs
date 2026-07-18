@@ -12,6 +12,7 @@ import {
   aptosStatus,
   governanceAccess,
   governanceCreator,
+  qualificationSnapshot,
   createManagedAccount,
   buildSponsoredVote,
   buildSponsoredEqualAdminVote,
@@ -41,6 +42,7 @@ import {
   sessionCookie,
 } from './lib/http.mjs'
 import {
+  countActiveParticipants,
   countRecentSponsoredVotes,
   claimVoteIntent,
   consumeChallenge,
@@ -66,6 +68,7 @@ import {
   getPendingRegistration,
   getManagedWallet,
   getLogicGameProfile,
+  getParticipantProfile,
   getSettings,
   getVoteIntent,
   hashSecret,
@@ -73,6 +76,7 @@ import {
   logEvent,
   latestBackup,
   listGovernanceUsers,
+  listParticipants,
   linkAptosIdentity,
   listLogicGameAnsweredIds,
   listAccountConnections,
@@ -89,11 +93,16 @@ import {
   putPendingRegistration,
   recordUptime,
   recordLogicGameAnswer,
+  recordParticipantActivity,
+  replaceQualificationSnapshots,
   setSettings,
   updateProfile,
   upsertUser,
   consumeLogicGameRound,
   createDocumentProposal,
+  supportDocumentProposal,
+  getDocumentProposalSupportProof,
+  prepareDocumentProposalElection,
   getDocumentProposal,
   getDocumentProposalByHash,
   listDocumentProposals,
@@ -120,6 +129,8 @@ const shouldOpen = args.includes('--open')
 const startedAt = new Date().toISOString()
 // Sponsorship stays fail-closed until the published modules can be reproduced
 const publicSiteOrigin = (process.env.PUBLIC_SITE_ORIGIN ?? 'https://novyway.com').replace(/\/$/, '')
+const proposalLaunchQuorumBps = 1_000
+const proposalSupportWindowDays = 30
 // from the reviewed Move source and toolchain, not merely matched by byte hash.
 const sponsorshipLocked = process.env.SPONSORSHIP_EMERGENCY_LOCK === '1'
 
@@ -240,6 +251,22 @@ const documentProposalSchema = z.object({
   allowRevote: z.boolean().default(true),
 }).strict()
 const proposalPublishSchema = z.object({ txHash: z.string().regex(/^0x[0-9a-f]{64}$/i) }).strict()
+const participantQuerySchema = z.object({
+  search: z.string().trim().max(100).optional(),
+  role: z.enum(['voter', 'admin', 'super_admin']).optional(),
+  sort: z.enum(['name', 'registered', 'role', 'votes', 'documents', 'exams', 'qualifications', 'score']).default('registered'),
+  direction: z.enum(['asc', 'desc']).default('desc'),
+  page: z.coerce.number().int().min(1).max(100_000).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(30),
+}).strict()
+const participantActivitySchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('document_opened'), subjectId: z.string().regex(/^[a-z0-9][a-z0-9-]{0,79}$/) }).strict(),
+  z.object({
+    kind: z.literal('exam_passed'),
+    subjectId: z.string().regex(/^[a-z0-9][a-z0-9-]{0,79}$/),
+    scoreBps: z.number().int().min(0).max(10_000),
+  }).strict(),
+])
 
 const passwordSchema = z.string().min(12).max(128)
 const passwordRegisterSchema = z.object({
@@ -478,6 +505,50 @@ async function handlePublicApi(request, response, url) {
     const settings = await getSettings()
     return json(response, 200, { network: 'testnet', moduleAddress: aptosRuntime.moduleAddress, features: { accounts: true, aptosConnect: true, passwordAccounts: true, emailDelivery: emailDeliveryConfigured(), sponsoredVotes: settings.sponsorshipEnabled && !sponsorshipLocked } })
   }
+  if (url.pathname === '/api/v1/participants' && request.method === 'GET') {
+    const query = participantQuerySchema.parse({
+      search: url.searchParams.get('search') || undefined,
+      role: url.searchParams.get('role') || undefined,
+      sort: url.searchParams.get('sort') || undefined,
+      direction: url.searchParams.get('direction') || undefined,
+      page: url.searchParams.get('page') || undefined,
+      pageSize: url.searchParams.get('pageSize') || undefined,
+    })
+    return json(response, 200, await listParticipants(query), { 'Cache-Control': 'no-store' })
+  }
+  if (url.pathname === '/api/v1/me/activity' && request.method === 'POST') {
+    const session = await requireSession(request)
+    requireCsrf(request, session)
+    rateLimitIdentifier('participant-activity', session.user_id, 240, 60 * 60_000)
+    const input = participantActivitySchema.parse(await readJson(request, 8_000))
+    const metadata = input.kind === 'exam_passed' ? { scoreBps: input.scoreBps, source: 'platform_exam' } : {}
+    const activity = await recordParticipantActivity({
+      userId: session.user_id,
+      kind: input.kind,
+      subjectId: input.subjectId,
+      metadata,
+    })
+    return json(response, activity.created ? 201 : 200, { activity }, { 'Cache-Control': 'no-store' })
+  }
+  if (url.pathname === '/api/v1/me/qualifications/sync' && request.method === 'POST') {
+    const session = await requireSession(request)
+    requireCsrf(request, session)
+    rateLimitIdentifier('qualification-sync', session.user_id, 12, 60 * 60_000)
+    const qualifications = await qualificationSnapshot(session.aptos_address)
+    await replaceQualificationSnapshots(session.user_id, qualifications)
+    return json(response, 200, { qualifications }, { 'Cache-Control': 'no-store' })
+  }
+  const participantMatch = url.pathname.match(/^\/api\/v1\/participants\/([^/]{1,100})$/)
+  if (participantMatch && request.method === 'GET') {
+    const identifier = decodeURIComponent(participantMatch[1])
+    if (!/^[0-9a-f-]{36}$/i.test(identifier) && !/^0x[0-9a-f]{64}$/i.test(identifier)) {
+      return json(response, 400, { error: 'invalid_participant_id' })
+    }
+    const participant = await getParticipantProfile(identifier)
+    return participant
+      ? json(response, 200, { participant }, { 'Cache-Control': 'no-store' })
+      : json(response, 404, { error: 'participant_not_found' })
+  }
   if (url.pathname === '/api/v1/document-proposals' && request.method === 'GET') {
     const documentId = url.searchParams.get('documentId')
     const electionId = url.searchParams.get('electionId')
@@ -485,8 +556,9 @@ async function handlePublicApi(request, response, url) {
       throw Object.assign(new Error('invalid_document_id'), { status: 400 })
     }
     if (electionId && !/^\d+$/.test(electionId)) throw Object.assign(new Error('invalid_election_id'), { status: 400 })
+    const viewer = await sessionFromRequest(request)
     return json(response, 200, {
-      proposals: await listDocumentProposals({ documentId, electionId }),
+      proposals: await listDocumentProposals({ documentId, electionId, viewerUserId: viewer?.user_id ?? null }),
     }, { 'Cache-Control': 'no-store' })
   }
   const proposalHashMatch = url.pathname.match(/^\/api\/v1\/document-proposals\/sha256\/(0x[0-9a-f]{64})$/i)
@@ -502,9 +574,33 @@ async function handlePublicApi(request, response, url) {
     })
     return response.end(body)
   }
+  const proposalSupportMatch = url.pathname.match(/^\/api\/v1\/document-proposals\/([0-9a-f-]{36})\/support$/)
+  if (proposalSupportMatch && request.method === 'POST') {
+    const session = await requireSession(request)
+    requireCsrf(request, session)
+    rateLimitIdentifier('proposal-support', session.user_id, 60, 24 * 60 * 60_000)
+    const proposal = await supportDocumentProposal({
+      id: proposalSupportMatch[1],
+      userId: session.user_id,
+      supporterAddress: session.aptos_address,
+    })
+    await logEvent('governance', 'ok', 'Document proposal supported', {
+      proposalId: proposal.id,
+      supporterAddress: session.aptos_address,
+    })
+    return json(response, 200, { proposal }, { 'Cache-Control': 'no-store' })
+  }
+  const proposalProofMatch = url.pathname.match(/^\/api\/v1\/document-proposals\/([0-9a-f-]{36})\/support-proof$/)
+  if (proposalProofMatch && request.method === 'GET') {
+    const proof = await getDocumentProposalSupportProof(proposalProofMatch[1])
+    return proof
+      ? json(response, 200, proof, { 'Cache-Control': 'public, max-age=60' })
+      : json(response, 404, { error: 'support_proof_not_found' })
+  }
   const publicProposalMatch = url.pathname.match(/^\/api\/v1\/document-proposals\/([0-9a-f-]{36})$/)
   if (publicProposalMatch && request.method === 'GET') {
-    const proposal = await getDocumentProposal(publicProposalMatch[1])
+    const viewer = await sessionFromRequest(request)
+    const proposal = await getDocumentProposal(publicProposalMatch[1], { viewerUserId: viewer?.user_id ?? null })
     return proposal
       ? json(response, 200, { proposal }, { 'Cache-Control': 'no-store' })
       : json(response, 404, { error: 'proposal_not_found' })
@@ -513,24 +609,36 @@ async function handlePublicApi(request, response, url) {
     return json(response, 200, { transactionHashes: await listRecordedChainTransactions() }, { 'Cache-Control': 'no-store' })
   }
   if (url.pathname === '/api/v1/governance/document-proposals' && request.method === 'GET') {
-    await requireGovernanceAdmin(request)
+    const session = await requireGovernanceAdmin(request)
     const documentId = url.searchParams.get('documentId')
     return json(response, 200, {
-      proposals: await listDocumentProposals({ documentId, includeDrafts: true }),
+      proposals: await listDocumentProposals({ documentId, includeDrafts: true, viewerUserId: session.user_id }),
     }, { 'Cache-Control': 'no-store' })
   }
-  if (url.pathname === '/api/v1/governance/document-proposals' && request.method === 'POST') {
-    const session = await requireGovernanceAdmin(request)
+  if ((url.pathname === '/api/v1/document-proposals' || url.pathname === '/api/v1/governance/document-proposals') && request.method === 'POST') {
+    const session = await requireSession(request)
     requireCsrf(request, session)
     rateLimit(request, 'document-proposal-create', 30, 60 * 60_000)
+    rateLimitIdentifier('document-proposal-create-user', session.user_id, 10, 24 * 60 * 60_000)
     const input = documentProposalSchema.parse(await readJson(request, 96_000))
     const id = randomUUID()
     const createdAt = new Date().toISOString()
-    const endsAtSecs = String(Math.floor(Date.now() / 1000) + input.durationDays * 86_400)
-    const payload = createProposalPayload({ ...input, endsAtSecs }, {
+    const eligibleAccounts = await countActiveParticipants()
+    const proportionalThreshold = Math.ceil(eligibleAccounts * proposalLaunchQuorumBps / 10_000)
+    const requiredSupporters = Math.min(eligibleAccounts, Math.max(eligibleAccounts > 1 ? 2 : 1, proportionalThreshold))
+    const supportDeadlineAt = new Date(Date.now() + proposalSupportWindowDays * 86_400_000).toISOString()
+    const launch = {
+      snapshotAt: createdAt,
+      eligibleAccounts,
+      quorumBps: proposalLaunchQuorumBps,
+      requiredSupporters,
+      supportDeadlineAt,
+    }
+    const payload = createProposalPayload(input, {
       id,
       createdAt,
-      createdByAddress: session.auth_address,
+      createdByAddress: session.aptos_address,
+      launch,
     })
     const canonicalText = canonicalJson(payload)
     const metadataHash = proposalSha256(payload)
@@ -548,22 +656,51 @@ async function handlePublicApi(request, response, url) {
       moduleAddress: aptosRuntime.moduleAddress,
       deploymentGeneration: aptosRuntime.deploymentGeneration,
       createdBy: session.user_id,
+      createdByAddress: session.aptos_address,
       idempotencyKey: input.idempotencyKey,
       createdAt,
+      supportSnapshotAt: createdAt,
+      supportEligibleCount: eligibleAccounts,
+      supportQuorumBps: proposalLaunchQuorumBps,
+      supportRequiredCount: requiredSupporters,
+      supportDeadlineAt,
     })
-    return json(response, 201, {
+    await logEvent('governance', 'ok', 'Document proposal initiated', {
+      proposalId: proposal.id,
+      documentId: proposal.documentId,
+      requiredSupporters,
+      eligibleAccounts,
+    })
+    return json(response, 201, { proposal }, { 'Cache-Control': 'no-store' })
+  }
+  const prepareProposalMatch = url.pathname.match(/^\/api\/v1\/governance\/document-proposals\/([0-9a-f-]{36})\/prepare-election$/)
+  if (prepareProposalMatch && request.method === 'POST') {
+    const session = await requireGovernanceAdmin(request)
+    requireCsrf(request, session)
+    rateLimitIdentifier('document-proposal-prepare', session.user_id, 30, 60 * 60_000)
+    const current = await getDocumentProposal(prepareProposalMatch[1], { includeDrafts: true, viewerUserId: session.user_id })
+    if (!current) return json(response, 404, { error: 'proposal_not_found' })
+    if (current.status !== 'ready') return json(response, 409, { error: 'proposal_not_ready' })
+    const durationDays = Number(current.payload.voting.durationDays ?? 14)
+    const endsAtSecs = String(Math.floor(Date.now() / 1000) + durationDays * 86_400)
+    const proposal = await prepareDocumentProposalElection({
+      id: current.id,
+      endsAtSecs,
+      viewerUserId: session.user_id,
+    })
+    return json(response, 200, {
       proposal,
       transaction: {
         function: `${aptosRuntime.moduleAddress}::weighted_voting::create_election`,
         functionArguments: [
-          input.categoryId,
-          Array.from(Buffer.from(metadataHash.slice(2), 'hex')),
-          Array.from(Buffer.from(metadataUri, 'utf8')),
+          proposal.categoryId,
+          Array.from(Buffer.from(proposal.metadataHash.slice(2), 'hex')),
+          Array.from(Buffer.from(proposal.metadataUri, 'utf8')),
           '0',
-          endsAtSecs,
-          input.passBps,
-          input.quorumBps,
-          input.allowRevote,
+          proposal.payload.voting.endsAtSecs,
+          proposal.payload.voting.passBps,
+          proposal.payload.voting.quorumBps,
+          proposal.payload.voting.allowRevote,
         ],
       },
     }, { 'Cache-Control': 'no-store' })

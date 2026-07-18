@@ -4,7 +4,15 @@ import { join } from 'node:path'
 import { spawn } from 'node:child_process'
 import pg from 'pg'
 import { backupRoot, databaseConfigPath, postgresBin, secretsRoot } from './runtime-paths.mjs'
-import { publicProposal } from './document-proposal.mjs'
+import {
+  canonicalJson,
+  canonicalSha256,
+  createSupportProof,
+  prepareProposalElectionPayload,
+  proposalSha256,
+  publicProposal,
+  sealProposalSupport,
+} from './document-proposal.mjs'
 
 export { backupRoot, secretsRoot }
 
@@ -204,12 +212,67 @@ export async function initializeStorage() {
     );
     ALTER TABLE document_proposals ADD COLUMN IF NOT EXISTS finalization_tx_hash text;
     ALTER TABLE document_proposals ADD COLUMN IF NOT EXISTS idempotency_key uuid;
+    ALTER TABLE document_proposals ADD COLUMN IF NOT EXISTS support_snapshot_at timestamptz;
+    ALTER TABLE document_proposals ADD COLUMN IF NOT EXISTS support_eligible_count integer;
+    ALTER TABLE document_proposals ADD COLUMN IF NOT EXISTS support_quorum_bps integer;
+    ALTER TABLE document_proposals ADD COLUMN IF NOT EXISTS support_required_count integer;
+    ALTER TABLE document_proposals ADD COLUMN IF NOT EXISTS support_deadline_at timestamptz;
+    ALTER TABLE document_proposals ADD COLUMN IF NOT EXISTS support_sealed_at timestamptz;
+    ALTER TABLE document_proposals ADD COLUMN IF NOT EXISTS supporters_hash text;
+    ALTER TABLE document_proposals DROP CONSTRAINT IF EXISTS document_proposals_status_check;
+    ALTER TABLE document_proposals ADD CONSTRAINT document_proposals_status_check
+      CHECK (status IN ('draft', 'supporting', 'ready', 'published'));
+    ALTER TABLE document_proposals DROP CONSTRAINT IF EXISTS document_proposals_support_counts_check;
+    ALTER TABLE document_proposals ADD CONSTRAINT document_proposals_support_counts_check CHECK (
+      support_required_count IS NULL OR (
+        support_eligible_count >= 1 AND support_quorum_bps BETWEEN 1 AND 10000
+        AND support_required_count BETWEEN 1 AND support_eligible_count
+      )
+    );
     CREATE UNIQUE INDEX IF NOT EXISTS document_proposals_idempotency_unique
       ON document_proposals(created_by, idempotency_key) WHERE idempotency_key IS NOT NULL;
     CREATE UNIQUE INDEX IF NOT EXISTS document_proposals_finalization_tx_unique
       ON document_proposals(finalization_tx_hash) WHERE finalization_tx_hash IS NOT NULL;
     CREATE INDEX IF NOT EXISTS document_proposals_document_idx ON document_proposals(document_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS document_proposals_status_idx ON document_proposals(status, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS document_proposal_supports (
+      proposal_id uuid NOT NULL REFERENCES document_proposals(id) ON DELETE CASCADE,
+      user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      supporter_address text NOT NULL CHECK (supporter_address ~ '^0x[0-9a-f]{64}$'),
+      supported_at timestamptz NOT NULL,
+      PRIMARY KEY (proposal_id, user_id)
+    );
+    CREATE INDEX IF NOT EXISTS document_proposal_supports_time_idx
+      ON document_proposal_supports(proposal_id, supported_at, supporter_address);
+
+    CREATE TABLE IF NOT EXISTS participant_activity (
+      id uuid PRIMARY KEY,
+      user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      kind text NOT NULL CHECK (kind IN ('document_opened', 'exam_passed')),
+      subject_id text NOT NULL CHECK (subject_id ~ '^[a-z0-9][a-z0-9-]{0,79}$'),
+      metadata_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+      occurred_at timestamptz NOT NULL,
+      UNIQUE (user_id, kind, subject_id)
+    );
+    CREATE INDEX IF NOT EXISTS participant_activity_user_time_idx
+      ON participant_activity(user_id, occurred_at DESC);
+
+    CREATE TABLE IF NOT EXISTS user_qualification_snapshots (
+      user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      category_id bigint NOT NULL CHECK (category_id >= 0),
+      level smallint NOT NULL CHECK (level BETWEEN 0 AND 3),
+      eligible boolean NOT NULL,
+      evidence_hash text,
+      manual_weight numeric(20, 0) NOT NULL DEFAULT 0,
+      membership_version numeric(20, 0) NOT NULL,
+      change_id numeric(20, 0) NOT NULL,
+      confirmed_at timestamptz NOT NULL,
+      synced_at timestamptz NOT NULL,
+      PRIMARY KEY (user_id, category_id)
+    );
+    CREATE INDEX IF NOT EXISTS user_qualification_snapshots_level_idx
+      ON user_qualification_snapshots(eligible, level DESC, confirmed_at DESC);
 
     CREATE TABLE IF NOT EXISTS settings (
       key text PRIMARY KEY,
@@ -293,7 +356,7 @@ export async function initializeStorage() {
       provider, true, created_at FROM users
     ON CONFLICT (aptos_address) DO NOTHING`)
     await client.query(`INSERT INTO schema_migrations (version, applied_at)
-      VALUES (20260717, NOW()), (2026071701, NOW()), (2026071801, NOW()) ON CONFLICT (version) DO NOTHING`)
+      VALUES (20260717, NOW()), (2026071701, NOW()), (2026071801, NOW()), (2026071802, NOW()) ON CONFLICT (version) DO NOTHING`)
     await client.query('COMMIT')
   } catch (error) {
     await client.query('ROLLBACK')
@@ -868,58 +931,392 @@ export async function listGovernanceUsers() {
   return rows
 }
 
-export async function createDocumentProposal(input) {
-  const values = [
-    input.id,
-    input.documentId,
-    input.clauseId,
-    input.categoryId,
-    input.canonicalText,
-    JSON.stringify(input.payload),
-    input.metadataHash,
-    input.metadataUri,
-    input.chainId,
-    input.moduleAddress.toLowerCase(),
-    input.deploymentGeneration,
-    input.createdBy,
-    input.idempotencyKey,
-    input.createdAt,
-  ]
-  const inserted = await pool.query(`INSERT INTO document_proposals
-    (id, document_id, clause_id, category_id, canonical_text, payload_json, metadata_hash, metadata_uri,
-     chain_id, module_address, deployment_generation, created_by, idempotency_key, created_at)
-    VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13, $14)
-    ON CONFLICT (created_by, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
-    RETURNING *`, values)
-  if (inserted.rows[0]) return publicProposal(inserted.rows[0])
+const participantStatsCte = `
+  WITH vote_stats AS (
+    SELECT user_id, COUNT(DISTINCT election_id)::int AS vote_count
+    FROM vote_intents WHERE status = 'confirmed' GROUP BY user_id
+  ), activity_stats AS (
+    SELECT user_id,
+      COUNT(*) FILTER (WHERE kind = 'document_opened')::int AS document_count,
+      COUNT(*) FILTER (WHERE kind = 'exam_passed')::int AS exam_count
+    FROM participant_activity GROUP BY user_id
+  ), proposal_stats AS (
+    SELECT created_by AS user_id, COUNT(*)::int AS proposal_count
+    FROM document_proposals WHERE status <> 'draft' GROUP BY created_by
+  ), qualification_stats AS (
+    SELECT user_id,
+      COUNT(*) FILTER (WHERE eligible)::int AS qualification_count,
+      COALESCE(MAX(level) FILTER (WHERE eligible), 0)::int AS highest_level,
+      COALESCE(jsonb_agg(jsonb_build_object(
+        'categoryId', category_id::text,
+        'level', level,
+        'eligible', eligible,
+        'evidenceHash', evidence_hash,
+        'manualWeight', manual_weight::text,
+        'membershipVersion', membership_version::text,
+        'changeId', change_id::text,
+        'confirmedAt', confirmed_at
+      ) ORDER BY category_id) FILTER (WHERE eligible), '[]'::jsonb) AS qualifications
+    FROM user_qualification_snapshots GROUP BY user_id
+  )`
 
-  const existing = await pool.query(`SELECT * FROM document_proposals
-    WHERE created_by = $1 AND idempotency_key = $2`, [input.createdBy, input.idempotencyKey])
-  const row = existing.rows[0]
-  if (!row || row.canonical_text !== input.canonicalText) {
-    throw Object.assign(new Error('idempotency_payload_mismatch'), { status: 409 })
+const participantProjection = `
+  u.id, u.aptos_address, u.display_name, u.role, u.created_at,
+  COALESCE(v.vote_count, 0)::int AS vote_count,
+  COALESCE(a.document_count, 0)::int AS document_count,
+  COALESCE(a.exam_count, 0)::int AS exam_count,
+  COALESCE(p.proposal_count, 0)::int AS proposal_count,
+  COALESCE(q.qualification_count, 0)::int AS qualification_count,
+  COALESCE(q.highest_level, 0)::int AS highest_level,
+  COALESCE(q.qualifications, '[]'::jsonb) AS qualifications,
+  (COALESCE(v.vote_count, 0) * 5
+    + COALESCE(a.document_count, 0) * 2
+    + COALESCE(a.exam_count, 0) * 4
+    + COALESCE(p.proposal_count, 0) * 8)::int AS participation_score`
+
+const participantJoins = `
+  LEFT JOIN vote_stats v ON v.user_id = u.id
+  LEFT JOIN activity_stats a ON a.user_id = u.id
+  LEFT JOIN proposal_stats p ON p.user_id = u.id
+  LEFT JOIN qualification_stats q ON q.user_id = u.id`
+
+function publicParticipant(row) {
+  return {
+    id: row.id,
+    aptosAddress: row.aptos_address,
+    displayName: row.display_name,
+    role: row.role,
+    registeredAt: row.created_at,
+    participationScore: Number(row.participation_score),
+    stats: {
+      votes: Number(row.vote_count),
+      documents: Number(row.document_count),
+      exams: Number(row.exam_count),
+      proposals: Number(row.proposal_count),
+      qualifications: Number(row.qualification_count),
+      highestLevel: Number(row.highest_level),
+    },
+    qualifications: Array.isArray(row.qualifications) ? row.qualifications : [],
   }
-  return publicProposal(row)
 }
 
-export async function getDocumentProposal(id, { includeDrafts = false } = {}) {
-  const { rows } = await pool.query(`SELECT * FROM document_proposals
-    WHERE id = $1 AND ($2::boolean OR status = 'published')`, [id, includeDrafts])
+export async function countActiveParticipants() {
+  const { rows } = await pool.query("SELECT COUNT(*)::int AS count FROM users WHERE status = 'active'")
+  return Math.max(1, Number(rows[0]?.count ?? 0))
+}
+
+export async function recordParticipantActivity({ userId, kind, subjectId, metadata = {} }) {
+  const { rows } = await pool.query(`INSERT INTO participant_activity
+    (id, user_id, kind, subject_id, metadata_json, occurred_at)
+    VALUES ($1, $2, $3, $4, $5::jsonb, NOW())
+    ON CONFLICT (user_id, kind, subject_id) DO UPDATE
+      SET metadata_json = EXCLUDED.metadata_json
+    RETURNING id, occurred_at, (xmax = 0) AS created`,
+  [randomUUID(), userId, kind, subjectId, JSON.stringify(metadata)])
+  return { id: rows[0].id, occurredAt: rows[0].occurred_at, created: Boolean(rows[0].created) }
+}
+
+export async function replaceQualificationSnapshots(userId, qualifications) {
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    await client.query('DELETE FROM user_qualification_snapshots WHERE user_id = $1', [userId])
+    for (const qualification of qualifications) {
+      await client.query(`INSERT INTO user_qualification_snapshots
+        (user_id, category_id, level, eligible, evidence_hash, manual_weight, membership_version, change_id, confirmed_at, synced_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())`, [
+        userId,
+        qualification.categoryId,
+        qualification.level,
+        qualification.eligible,
+        qualification.evidenceHash,
+        qualification.manualWeight,
+        qualification.membershipVersion,
+        qualification.changeId,
+        qualification.confirmedAt,
+      ])
+    }
+    await client.query('COMMIT')
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {})
+    throw error
+  } finally {
+    client.release()
+  }
+  return qualifications.length
+}
+
+export async function listParticipants({ search = null, role = null, sort = 'registered', direction = 'desc', page = 1, pageSize = 30 } = {}) {
+  const orderFields = {
+    name: "LOWER(COALESCE(u.display_name, u.aptos_address))",
+    registered: 'u.created_at',
+    role: 'u.role',
+    votes: 'vote_count',
+    documents: 'document_count',
+    exams: 'exam_count',
+    qualifications: 'qualification_count',
+    score: 'participation_score',
+  }
+  const order = orderFields[sort] ?? orderFields.registered
+  const orderDirection = direction === 'asc' ? 'ASC' : 'DESC'
+  const safePage = Math.max(1, Number(page) || 1)
+  const safePageSize = Math.min(100, Math.max(1, Number(pageSize) || 30))
+  const offset = (safePage - 1) * safePageSize
+  const { rows } = await pool.query(`${participantStatsCte}
+    SELECT ${participantProjection}, COUNT(*) OVER()::int AS total
+    FROM users u ${participantJoins}
+    WHERE u.status = 'active'
+      AND ($1::text IS NULL OR COALESCE(u.display_name, '') ILIKE '%' || $1 || '%' OR u.aptos_address ILIKE '%' || $1 || '%')
+      AND ($2::text IS NULL OR u.role = $2)
+    ORDER BY ${order} ${orderDirection}, u.created_at ASC, u.id ASC
+    LIMIT $3 OFFSET $4`, [search, role, safePageSize, offset])
+  return {
+    participants: rows.map(publicParticipant),
+    total: Number(rows[0]?.total ?? 0),
+    page: safePage,
+    pageSize: safePageSize,
+  }
+}
+
+export async function getParticipantProfile(identifier) {
+  const { rows } = await pool.query(`${participantStatsCte}
+    SELECT ${participantProjection}
+    FROM users u ${participantJoins}
+    WHERE u.status = 'active' AND (u.id::text = $1 OR LOWER(u.aptos_address) = LOWER($1))
+    LIMIT 1`, [identifier])
+  if (!rows[0]) return null
+  const participant = publicParticipant(rows[0])
+  const activity = await pool.query(`SELECT
+      TO_CHAR((occurred_at AT TIME ZONE 'UTC')::date, 'YYYY-MM-DD') AS date,
+      COUNT(*)::int AS total,
+      COUNT(*) FILTER (WHERE kind = 'vote')::int AS votes,
+      COUNT(*) FILTER (WHERE kind = 'document')::int AS documents,
+      COUNT(*) FILTER (WHERE kind = 'exam')::int AS exams,
+      COUNT(*) FILTER (WHERE kind = 'proposal')::int AS proposals
+    FROM (
+      SELECT COALESCE(confirmed_at, submitted_at, created_at) AS occurred_at, 'vote'::text AS kind
+      FROM vote_intents WHERE user_id = $1 AND status = 'confirmed'
+      UNION ALL
+      SELECT occurred_at, CASE WHEN kind = 'document_opened' THEN 'document' ELSE 'exam' END
+      FROM participant_activity WHERE user_id = $1
+      UNION ALL
+      SELECT created_at, 'proposal'::text FROM document_proposals
+      WHERE created_by = $1 AND status <> 'draft'
+    ) events
+    WHERE occurred_at >= CURRENT_DATE - INTERVAL '364 days'
+    GROUP BY (occurred_at AT TIME ZONE 'UTC')::date
+    ORDER BY (occurred_at AT TIME ZONE 'UTC')::date`, [rows[0].id])
+  return {
+    ...participant,
+    activity: activity.rows.map((row) => ({
+      date: row.date,
+      total: Number(row.total),
+      votes: Number(row.votes),
+      documents: Number(row.documents),
+      exams: Number(row.exams),
+      proposals: Number(row.proposals),
+    })),
+  }
+}
+
+const proposalProjection = (viewerParameter = 'NULL::uuid') => `
+  p.*, creator.display_name AS created_by_name, creator.aptos_address AS created_by_address,
+  (SELECT COUNT(*)::int FROM document_proposal_supports support WHERE support.proposal_id = p.id) AS support_count,
+  EXISTS (SELECT 1 FROM document_proposal_supports support
+    WHERE support.proposal_id = p.id AND support.user_id = ${viewerParameter}) AS current_user_supported`
+
+async function selectProposal(db, id, viewerUserId = null) {
+  const { rows } = await db.query(`SELECT ${proposalProjection('$2::uuid')}
+    FROM document_proposals p
+    JOIN users creator ON creator.id = p.created_by
+    WHERE p.id = $1`, [id, viewerUserId])
+  return rows[0] ?? null
+}
+
+function supportProofFromRows(proposal, supporters, sealedAt) {
+  return createSupportProof({
+    proposalId: proposal.id,
+    snapshotAt: new Date(proposal.support_snapshot_at).toISOString(),
+    eligibleAccounts: proposal.support_eligible_count,
+    quorumBps: proposal.support_quorum_bps,
+    requiredSupporters: proposal.support_required_count,
+    sealedAt: new Date(sealedAt).toISOString(),
+    supporters: supporters.map((row) => ({ address: row.supporter_address, supportedAt: row.supported_at })),
+  })
+}
+
+async function sealProposalIfReady(client, row) {
+  if (row.status !== 'supporting' || row.support_sealed_at) return row
+  const supporters = await client.query(`SELECT supporter_address, supported_at
+    FROM document_proposal_supports WHERE proposal_id = $1
+    ORDER BY supporter_address, supported_at`, [row.id])
+  if (supporters.rowCount < Number(row.support_required_count)) return row
+  const sealedAt = new Date()
+  const proof = supportProofFromRows(row, supporters.rows, sealedAt)
+  const sealedPayload = sealProposalSupport(row.payload_json, proof)
+  const canonicalText = canonicalJson(sealedPayload)
+  const metadataHash = proposalSha256(sealedPayload)
+  const metadataUri = row.metadata_uri.replace(/0x[0-9a-f]{64}$/i, metadataHash)
+  const supportersHash = canonicalSha256(proof)
+  const { rows } = await client.query(`UPDATE document_proposals SET
+      payload_json = $2::jsonb, canonical_text = $3, metadata_hash = $4, metadata_uri = $5,
+      status = 'ready', support_sealed_at = $6, supporters_hash = $7
+    WHERE id = $1 AND status = 'supporting'
+    RETURNING *`, [row.id, JSON.stringify(sealedPayload), canonicalText, metadataHash, metadataUri, sealedAt, supportersHash])
+  return rows[0] ?? row
+}
+
+export async function createDocumentProposal(input) {
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const values = [
+      input.id,
+      input.documentId,
+      input.clauseId,
+      input.categoryId,
+      input.canonicalText,
+      JSON.stringify(input.payload),
+      input.metadataHash,
+      input.metadataUri,
+      input.chainId,
+      input.moduleAddress.toLowerCase(),
+      input.deploymentGeneration,
+      input.createdBy,
+      input.idempotencyKey,
+      input.createdAt,
+      input.supportSnapshotAt,
+      input.supportEligibleCount,
+      input.supportQuorumBps,
+      input.supportRequiredCount,
+      input.supportDeadlineAt,
+    ]
+    const inserted = await client.query(`INSERT INTO document_proposals
+      (id, document_id, clause_id, category_id, canonical_text, payload_json, metadata_hash, metadata_uri,
+       status, chain_id, module_address, deployment_generation, created_by, idempotency_key, created_at,
+       support_snapshot_at, support_eligible_count, support_quorum_bps, support_required_count, support_deadline_at)
+      VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, 'supporting', $9, $10, $11, $12, $13, $14,
+        $15, $16, $17, $18, $19)
+      ON CONFLICT (created_by, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
+      RETURNING *`, values)
+    let row = inserted.rows[0]
+    if (!row) {
+      const existing = await client.query(`SELECT * FROM document_proposals
+        WHERE created_by = $1 AND idempotency_key = $2`, [input.createdBy, input.idempotencyKey])
+      row = existing.rows[0]
+      if (!row) throw Object.assign(new Error('proposal_idempotency_conflict'), { status: 409 })
+      await client.query('COMMIT')
+      const selected = await selectProposal(pool, row.id, input.createdBy)
+      return publicProposal(selected)
+    }
+    await client.query(`INSERT INTO document_proposal_supports
+      (proposal_id, user_id, supporter_address, supported_at)
+      VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`,
+    [row.id, input.createdBy, input.createdByAddress.toLowerCase(), input.createdAt])
+    row = await sealProposalIfReady(client, row)
+    await client.query('COMMIT')
+    const selected = await selectProposal(pool, row.id, input.createdBy)
+    return publicProposal(selected)
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {})
+    throw error
+  } finally {
+    client.release()
+  }
+}
+
+export async function supportDocumentProposal({ id, userId, supporterAddress }) {
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const selected = await client.query('SELECT * FROM document_proposals WHERE id = $1 FOR UPDATE', [id])
+    let row = selected.rows[0]
+    if (!row || row.status === 'draft') throw Object.assign(new Error('proposal_not_found'), { status: 404 })
+    const alreadySupported = await client.query(`SELECT 1 FROM document_proposal_supports
+      WHERE proposal_id = $1 AND user_id = $2`, [id, userId])
+    if (alreadySupported.rowCount === 0) {
+      if (row.status !== 'supporting') throw Object.assign(new Error('proposal_support_closed'), { status: 409 })
+      if (new Date(row.support_deadline_at).getTime() <= Date.now()) {
+        throw Object.assign(new Error('proposal_support_expired'), { status: 410 })
+      }
+      await client.query(`INSERT INTO document_proposal_supports
+        (proposal_id, user_id, supporter_address, supported_at)
+        VALUES ($1, $2, $3, NOW())`, [id, userId, supporterAddress.toLowerCase()])
+      row = await sealProposalIfReady(client, row)
+    }
+    await client.query('COMMIT')
+    const proposal = await selectProposal(pool, id, userId)
+    return publicProposal(proposal)
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {})
+    throw error
+  } finally {
+    client.release()
+  }
+}
+
+export async function getDocumentProposalSupportProof(id) {
+  const proposalResult = await pool.query('SELECT * FROM document_proposals WHERE id = $1', [id])
+  const proposal = proposalResult.rows[0]
+  if (!proposal || !proposal.support_sealed_at || !proposal.supporters_hash) return null
+  const supporters = await pool.query(`SELECT supporter_address, supported_at
+    FROM document_proposal_supports WHERE proposal_id = $1
+    ORDER BY supporter_address, supported_at`, [id])
+  const proof = supportProofFromRows(proposal, supporters.rows, proposal.support_sealed_at)
+  const sha256 = canonicalSha256(proof)
+  if (sha256 !== proposal.supporters_hash) throw new Error('proposal_support_proof_corrupted')
+  return { proof, sha256 }
+}
+
+export async function prepareDocumentProposalElection({ id, endsAtSecs, viewerUserId = null }) {
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const selected = await client.query('SELECT * FROM document_proposals WHERE id = $1 FOR UPDATE', [id])
+    const row = selected.rows[0]
+    if (!row) throw Object.assign(new Error('proposal_not_found'), { status: 404 })
+    if (row.status !== 'ready') throw Object.assign(new Error('proposal_not_ready'), { status: 409 })
+    if (row.payload_json?.voting?.endsAtSecs === '0') {
+      const payload = prepareProposalElectionPayload(row.payload_json, endsAtSecs)
+      const canonicalText = canonicalJson(payload)
+      const metadataHash = proposalSha256(payload)
+      const metadataUri = row.metadata_uri.replace(/0x[0-9a-f]{64}$/i, metadataHash)
+      await client.query(`UPDATE document_proposals
+        SET payload_json = $2::jsonb, canonical_text = $3, metadata_hash = $4, metadata_uri = $5
+        WHERE id = $1`, [id, JSON.stringify(payload), canonicalText, metadataHash, metadataUri])
+    }
+    await client.query('COMMIT')
+    return publicProposal(await selectProposal(pool, id, viewerUserId))
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {})
+    throw error
+  } finally {
+    client.release()
+  }
+}
+
+export async function getDocumentProposal(id, { includeDrafts = false, viewerUserId = null } = {}) {
+  const { rows } = await pool.query(`SELECT ${proposalProjection('$2::uuid')}
+    FROM document_proposals p JOIN users creator ON creator.id = p.created_by
+    WHERE p.id = $1 AND ($3::boolean OR p.status <> 'draft')`, [id, viewerUserId, includeDrafts])
   return rows[0] ? publicProposal(rows[0]) : null
 }
 
-export async function getDocumentProposalByHash(metadataHash, { includeDrafts = false } = {}) {
-  const { rows } = await pool.query(`SELECT * FROM document_proposals
-    WHERE metadata_hash = $1 AND ($2::boolean OR status = 'published')`, [metadataHash.toLowerCase(), includeDrafts])
+export async function getDocumentProposalByHash(metadataHash, { includeDrafts = false, viewerUserId = null } = {}) {
+  const { rows } = await pool.query(`SELECT ${proposalProjection('$2::uuid')}
+    FROM document_proposals p JOIN users creator ON creator.id = p.created_by
+    WHERE p.metadata_hash = $1 AND ($3::boolean OR p.status <> 'draft')`,
+  [metadataHash.toLowerCase(), viewerUserId, includeDrafts])
   return rows[0] ? publicProposal(rows[0]) : null
 }
 
-export async function listDocumentProposals({ documentId = null, electionId = null, includeDrafts = false } = {}) {
-  const { rows } = await pool.query(`SELECT * FROM document_proposals
-    WHERE ($1::text IS NULL OR document_id = $1)
-      AND ($2::bigint IS NULL OR election_id = $2)
-      AND ($3::boolean OR status = 'published')
-    ORDER BY created_at DESC`, [documentId, electionId, includeDrafts])
+export async function listDocumentProposals({ documentId = null, electionId = null, includeDrafts = false, viewerUserId = null } = {}) {
+  const { rows } = await pool.query(`SELECT ${proposalProjection('$4::uuid')}
+    FROM document_proposals p JOIN users creator ON creator.id = p.created_by
+    WHERE ($1::text IS NULL OR p.document_id = $1)
+      AND ($2::bigint IS NULL OR p.election_id = $2)
+      AND ($3::boolean OR p.status <> 'draft')
+    ORDER BY p.created_at DESC`, [documentId, electionId, includeDrafts, viewerUserId])
   return rows.map(publicProposal)
 }
 
@@ -935,14 +1332,16 @@ export async function publishDocumentProposal({ id, electionId, txHash }) {
         && row.creation_tx_hash?.toLowerCase() === txHash.toLowerCase()
       if (!sameBinding) throw Object.assign(new Error('proposal_already_published'), { status: 409 })
       await client.query('COMMIT')
-      return publicProposal(row)
+      return publicProposal(await selectProposal(pool, id))
     }
-    const updated = await client.query(`UPDATE document_proposals
+    if (!['ready', 'draft'].includes(row.status)) {
+      throw Object.assign(new Error('proposal_not_ready'), { status: 409 })
+    }
+    await client.query(`UPDATE document_proposals
       SET status = 'published', election_id = $2, creation_tx_hash = $3, published_at = NOW()
-      WHERE id = $1 AND status = 'draft'
-      RETURNING *`, [id, electionId, txHash.toLowerCase()])
+      WHERE id = $1 AND status IN ('ready', 'draft')`, [id, electionId, txHash.toLowerCase()])
     await client.query('COMMIT')
-    return publicProposal(updated.rows[0])
+    return publicProposal(await selectProposal(pool, id))
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {})
     throw error
@@ -956,11 +1355,10 @@ export async function recordDocumentProposalFinalization({ id, txHash }) {
     SET finalization_tx_hash = COALESCE(finalization_tx_hash, $2)
     WHERE id = $1 AND status = 'published'
       AND (finalization_tx_hash IS NULL OR finalization_tx_hash = $2)
-    RETURNING *`, [id, txHash.toLowerCase()])
+    RETURNING id`, [id, txHash.toLowerCase()])
   if (!rows[0]) throw Object.assign(new Error('proposal_finalization_conflict'), { status: 409 })
-  return publicProposal(rows[0])
+  return publicProposal(await selectProposal(pool, id))
 }
-
 export async function listRecordedChainTransactions() {
   const { rows } = await pool.query(`
     SELECT creation_tx_hash AS tx_hash FROM document_proposals WHERE creation_tx_hash IS NOT NULL

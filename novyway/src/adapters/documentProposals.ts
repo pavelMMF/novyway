@@ -5,7 +5,7 @@ import type { DocumentModel } from '../domain/types'
 export type LocalizedText = { ru: string; en: string }
 
 export type DocumentProposalPayload = {
-  schema: 'novyway.document-amendment.v1'
+  schema: 'novyway.document-amendment.v1' | 'novyway.document-amendment.v2'
   id: string
   createdAt: string
   createdBy: string
@@ -30,10 +30,33 @@ export type DocumentProposalPayload = {
     categoryId: string
     startsAtSecs: string
     endsAtSecs: string
+    durationDays?: number
     passBps: number
     quorumBps: number
     allowRevote: boolean
   }
+  launch?: {
+    rule: 'registered_accounts'
+    snapshotAt: string
+    eligibleAccounts: number
+    quorumBps: number
+    requiredSupporters: number
+    supportDeadlineAt: string
+    supportersSha256: string | null
+    sealedAt: string | null
+  }
+}
+
+export type ProposalSupport = {
+  snapshotAt: string
+  eligibleAccounts: number
+  quorumBps: number
+  requiredSupporters: number
+  supporterCount: number
+  deadlineAt: string
+  sealedAt: string | null
+  supportersSha256: string | null
+  currentUserSupported: boolean
 }
 
 export type DocumentProposal = {
@@ -45,7 +68,7 @@ export type DocumentProposal = {
   payload: DocumentProposalPayload
   metadataHash: string
   metadataUri: string
-  status: 'draft' | 'published'
+  status: 'draft' | 'supporting' | 'ready' | 'published' | 'expired'
   chainId: number
   moduleAddress: string
   deploymentGeneration: string
@@ -54,6 +77,8 @@ export type DocumentProposal = {
   finalizationTxHash: string | null
   createdAt: string
   publishedAt: string | null
+  creator: { displayName: string | null; aptosAddress: string | null }
+  support: ProposalSupport | null
 }
 
 export type ProposalVerification = 'verified' | 'mismatch' | 'unbound'
@@ -151,39 +176,42 @@ async function readError(response: Response) {
   return body?.error ?? `HTTP ${response.status}`
 }
 
-export async function prepareDocumentProposal(input: CreateDocumentProposalInput, csrfToken: string) {
-  const response = await fetch('/api/v1/governance/document-proposals', {
+async function postProposal(path: string, body: unknown, csrfToken: string) {
+  const response = await fetch(path, {
     method: 'POST',
     credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
-    body: JSON.stringify(input),
+    body: JSON.stringify(body),
   })
   if (!response.ok) throw new Error(await readError(response))
+  return response
+}
+
+export async function createDocumentProposal(input: CreateDocumentProposalInput, csrfToken: string) {
+  const response = await postProposal('/api/v1/document-proposals', input, csrfToken)
+  return response.json() as Promise<{ proposal: DocumentProposal }>
+}
+
+export async function supportDocumentProposal(id: string, csrfToken: string) {
+  const response = await postProposal(`/api/v1/document-proposals/${encodeURIComponent(id)}/support`, {}, csrfToken)
+  return response.json() as Promise<{ proposal: DocumentProposal }>
+}
+
+export async function prepareDocumentProposalElection(id: string, csrfToken: string) {
+  const response = await postProposal(`/api/v1/governance/document-proposals/${encodeURIComponent(id)}/prepare-election`, {}, csrfToken)
   return response.json() as Promise<PreparedProposal>
 }
 
 export async function publishDocumentProposal(id: string, txHash: string, csrfToken: string) {
-  const response = await fetch(`/api/v1/governance/document-proposals/${encodeURIComponent(id)}/publish`, {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
-    body: JSON.stringify({ txHash }),
-  })
-  if (!response.ok) throw new Error(await readError(response))
+  const response = await postProposal(`/api/v1/governance/document-proposals/${encodeURIComponent(id)}/publish`, { txHash }, csrfToken)
   return response.json() as Promise<{ proposal: DocumentProposal }>
 }
-
 
 export async function finalizeDocumentProposal(id: string, txHash: string, csrfToken: string) {
-  const response = await fetch(`/api/v1/governance/document-proposals/${encodeURIComponent(id)}/finalize`, {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
-    body: JSON.stringify({ txHash }),
-  })
-  if (!response.ok) throw new Error(await readError(response))
+  const response = await postProposal(`/api/v1/governance/document-proposals/${encodeURIComponent(id)}/finalize`, { txHash }, csrfToken)
   return response.json() as Promise<{ proposal: DocumentProposal }>
 }
+
 export function useDocumentProposals(options: {
   documentId?: string
   electionId?: string
@@ -233,4 +261,3 @@ export function useDocumentProposals(options: {
 
   return { proposals, loading, error, refresh }
 }
-

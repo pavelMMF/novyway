@@ -1,8 +1,10 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { fetchParticipant, syncMyQualifications, type Participant } from '../adapters/participants'
 import { fmtDate, useT } from '../i18n'
 import { useSettings, useStore } from '../demo/store'
-import { CatChip, KV, Lvl, PageHead, Panel, ScoreRing } from '../ui/components'
+import { CatChip, KV, Lvl, PageHead, Panel } from '../ui/components'
+import { ParticipationHeatmap } from '../ui/components/ParticipationHeatmap'
 import { AuthPanel } from '../ui/components/AuthPanel'
 import { fmtW } from '../domain/weights'
 import { useAccountSession, type AccountUser } from '../auth/session'
@@ -32,7 +34,34 @@ export default function Profile() {
   const [emailStage, setEmailStage] = useState<'old' | 'new'>('new')
   const [emailInfo, setEmailInfo] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
+  const [participant, setParticipant] = useState<Participant | null>(null)
+  const [participantLoading, setParticipantLoading] = useState(false)
+  const [participantError, setParticipantError] = useState<string | null>(null)
   const ru = lang === 'ru'
+  const participantUserId = user?.id ?? null
+  const participantCsrfToken = user?.csrfToken ?? null
+
+  useEffect(() => {
+    if (!participantUserId) {
+      setParticipant(null)
+      return
+    }
+    const controller = new AbortController()
+    setParticipantLoading(true)
+    setParticipantError(null)
+    const load = () => fetchParticipant(participantUserId, controller.signal)
+      .then((value) => setParticipant(value))
+      .catch((reason) => {
+        if (!controller.signal.aborted) setParticipantError(reason instanceof Error ? reason.message : 'participant_load_failed')
+      })
+      .finally(() => { if (!controller.signal.aborted) setParticipantLoading(false) })
+    if (participantCsrfToken) {
+      syncMyQualifications(participantCsrfToken).catch(() => null).finally(() => { if (!controller.signal.aborted) void load() })
+    } else {
+      void load()
+    }
+    return () => controller.abort()
+  }, [participantUserId, participantCsrfToken])
 
   if (!user) return <>
     <PageHead title={t('pr.title')} sub={ru ? 'Войдите, чтобы открыть личные данные, квалификации и голоса.' : 'Sign in to view your identity, qualifications, and votes.'} />
@@ -46,9 +75,8 @@ export default function Profile() {
   const myQuals = state.qualifications.filter((item) => sameVoter(item.voter)).sort((a, b) => b.level - a.level)
   const myVotes = state.votes.filter((item) => sameVoter(item.voter))
   const myReceipts = state.receipts.filter((item) => sameVoter(item.voter))
-  const myAttempts = state.attempts.filter((item) => sameVoter(item.voter))
-  const readCount = s.readDocs.length
-  const score = Math.min(100, myVotes.length * 25 + readCount * 15 + myAttempts.filter((item) => item.status === 'confirmed').length * 20)
+  const participationStats = participant?.stats ?? { votes: myVotes.length, documents: 0, exams: 0, proposals: 0, qualifications: myQuals.length, highestLevel: myQuals[0]?.level ?? 0 }
+  const participationScore = participant?.participationScore ?? 0
 
   async function saveProfile() {
     if (!accountUser.csrfToken) return
@@ -124,13 +152,25 @@ export default function Profile() {
     </Panel>}
 
     <div className="grid c2" style={{ marginBottom: 14 }}>
-      <Panel tight title={ru ? 'Личность в реестре' : 'Registry identity'}>
-        <div className="stack" style={{ gap: 7 }}>
-          <strong style={{ fontSize: 18 }}>{user.displayName || '—'}</strong>
-          {user.email && <a href={`mailto:${user.email}`} className="muted">{user.email}</a>}
-          <span className="muted">{user.telegram || '—'}</span>
-          <KV k={t('pr.role')} v={user.role} mono />
-          <KV k={t('pr.registered')} v={fmtDate(user.createdAt, lang)} mono />
+      <Panel tight title={ru ? 'Личность в реестре' : 'Registry identity'} className="profile-identity-card">
+        <div className="profile-identity-layout">
+          <div className="stack" style={{ gap: 7 }}>
+            <strong style={{ fontSize: 18 }}>{user.displayName || '—'}</strong>
+            {user.email && <a href={`mailto:${user.email}`} className="muted">{user.email}</a>}
+            <span className="muted">{user.telegram || '—'}</span>
+            <KV k={t('pr.role')} v={user.role} mono />
+            <KV k={t('pr.registered')} v={fmtDate(user.createdAt, lang)} mono />
+            <Link className="inline-link muted" to="/participants">{ru ? 'Сравнить с участниками' : 'Compare with participants'} →</Link>
+          </div>
+          <div className="profile-participation-summary" aria-label={ru ? 'Индекс участия' : 'Participation index'}>
+            <div className="profile-participation-score" title={ru ? 'Баллы публичной активности, не вес голоса' : 'Public activity points, not voting weight'}>{participationScore}</div>
+            <div className="profile-stat-grid">
+              <span><b>{participationStats.votes}</b>{t('sc.votes')}</span>
+              <span><b>{participationStats.documents}</b>{t('sc.docs')}</span>
+              <span><b>{participationStats.exams}</b>{t('sc.exams')}</span>
+              <span><b>{participationStats.proposals}</b>{ru ? 'предложений' : 'proposals'}</span>
+            </div>
+          </div>
         </div>
       </Panel>
       <Panel tight title={t('pr.address')}>
@@ -146,6 +186,12 @@ export default function Profile() {
         </div>
       </Panel>
     </div>
+
+    <Panel className="profile-year-panel" title={ru ? 'Активность за год' : 'Yearly activity'} hint={participantLoading ? (ru ? 'обновляется' : 'updating') : undefined}>
+      {participantError && <div className="callout red" role="alert">{participantError}</div>}
+      <ParticipationHeatmap activity={participant?.activity ?? []} lang={lang} />
+      <p className="muted" style={{ fontSize: 11.5 }}>{ru ? 'Индекс отражает действия на платформе и подтверждённые голоса. Он не меняет квалификационный вес.' : 'The index reflects platform actions and confirmed votes. It does not change qualification weight.'}</p>
+    </Panel>
 
     <Panel title={ru ? 'Почта и безопасность' : 'Email and security'} tight>
       <div className="stack profile-security">
@@ -166,15 +212,9 @@ export default function Profile() {
       </div>
     </Panel>
 
-    <div className="grid c2" style={{ marginBottom: 14 }}>
-      <Panel tight title={ru ? 'Индекс участия' : 'Participation index'}>
-        <div className="row" style={{ gap: 16 }}><ScoreRing score={score} /><div className="stack"><span>{myVotes.length} {t('sc.votes')}</span><span>{readCount} {t('sc.docs')}</span><span>{myAttempts.length} {t('sc.exams')}</span></div></div>
-        <p className="muted" style={{ fontSize: 11.5 }}>{ru ? 'Пока считается локально; не является квалификационным весом.' : 'Currently calculated locally; this is not a qualification weight.'}</p>
-      </Panel>
-      <Panel tight title={t('pr.receipts')}>
-        <div className="stack">{myReceipts.length === 0 ? <span className="muted">—</span> : myReceipts.map((receipt) => <Link key={receipt.id} to={`/elections/${receipt.electionId}`} className="mono">{receipt.id} · {receipt.txHash.slice(0, 12)}…</Link>)}</div>
-      </Panel>
-    </div>
+    <Panel tight title={t('pr.receipts')}>
+      <div className="stack">{myReceipts.length === 0 ? <span className="muted">—</span> : myReceipts.map((receipt) => <Link key={receipt.id} to={`/elections/${receipt.electionId}`} className="mono">{receipt.id} · {receipt.txHash.slice(0, 12)}…</Link>)}</div>
+    </Panel>
 
     <Panel title={t('pr.myQuals')}>
       {myQuals.length === 0 ? <div className="empty">{ru ? 'Для этого Aptos-адреса квалификации пока не назначены.' : 'No qualifications are assigned to this Aptos address yet.'}</div> : <table className="tbl responsive"><thead><tr><th>{t('common.category')}</th><th>{t('common.level')}</th><th>{t('pr.confirmed')}</th><th /></tr></thead><tbody>{myQuals.map((qualification) => {

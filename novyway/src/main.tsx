@@ -17,6 +17,7 @@ import '@fontsource/unbounded/500.css'
 import '@fontsource/unbounded/700.css'
 import '@fontsource/fira-code/500.css'
 import './styles/global.css'
+import './styles/participation.css'
 
 import App from './App'
 import { AppProviders } from './demo/store'

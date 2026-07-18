@@ -119,6 +119,49 @@ export async function governanceAccess(accountAddress) {
   return { creator, isCreator: address === creator, isAdmin: Boolean(adminResult[0]) }
 }
 
+function byteVectorHex(value) {
+  if (typeof value === 'string') {
+    if (/^0x[0-9a-f]*$/i.test(value)) return value.toLowerCase()
+    return `0x${Buffer.from(value, 'utf8').toString('hex')}`
+  }
+  if (Array.isArray(value)) return `0x${Buffer.from(value.map(Number)).toString('hex')}`
+  return null
+}
+
+export async function qualificationSnapshot(accountAddress) {
+  const address = accountAddress.toLowerCase()
+  const counters = await aptosClient.view({
+    payload: { function: `${moduleAddress}::weighted_voting::counters`, functionArguments: [] },
+  })
+  const categoryCount = Number(counters[0])
+  if (!Number.isSafeInteger(categoryCount) || categoryCount < 0 || categoryCount > 512) {
+    throw new Error('invalid_category_count')
+  }
+  const snapshots = await Promise.all(Array.from({ length: categoryCount }, async (_, categoryId) => {
+    const result = await aptosClient.view({
+      payload: {
+        function: `${moduleAddress}::weighted_voting::current_qualification`,
+        functionArguments: [address, String(categoryId)],
+      },
+    })
+    const changedAtSecs = Number(result[7])
+    return {
+      found: Boolean(result[0]),
+      categoryId: String(categoryId),
+      level: Number(result[1]),
+      eligible: Boolean(result[2]),
+      evidenceHash: byteVectorHex(result[3]),
+      manualWeight: String(result[4]),
+      membershipVersion: String(result[5]),
+      changeId: String(result[6]),
+      confirmedAt: Number.isFinite(changedAtSecs) && changedAtSecs > 0
+        ? new Date(changedAtSecs * 1000).toISOString()
+        : new Date(0).toISOString(),
+    }
+  }))
+  return snapshots.filter((snapshot) => snapshot.found)
+}
+
 export function createManagedAccount() {
   const account = Ed25519Account.generate()
   return { aptosAddress: account.accountAddress.toString(), privateKey: account.privateKey.toString() }
