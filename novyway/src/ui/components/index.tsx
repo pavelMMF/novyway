@@ -42,6 +42,7 @@ export function StatusChip({ status }: { status: ElectionStatus }) {
   const map: Record<ElectionStatus, { cls: string; label: string }> = {
     active: { cls: 'live', label: t('st.active') },
     upcoming: { cls: 'mute', label: t('st.upcoming') },
+    awaiting_finalization: { cls: 'warn', label: t('st.awaiting_finalization') },
     passed: { cls: 'ok', label: t('st.passed') },
     rejected: { cls: 'crit', label: t('st.rejected') },
     quorum_failed: { cls: 'warn', label: t('st.quorum_failed') },

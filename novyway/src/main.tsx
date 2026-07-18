@@ -28,7 +28,7 @@ installSoundDelegate()
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   if (import.meta.env.PROD) {
     window.addEventListener('load', () => {
-      navigator.serviceWorker.register('./sw.js?v=20260717-wallet-setup', { updateViaCache: 'none' })
+      navigator.serviceWorker.register('/sw.js?v=20260717-wallet-setup', { updateViaCache: 'none' })
         .then((registration) => registration.update())
         .catch(() => { /* offline shell unavailable */ })
     })

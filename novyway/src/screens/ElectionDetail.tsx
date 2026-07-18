@@ -10,9 +10,29 @@ import { LiveElectionDetail } from './LiveElectionDetail'
 
 export default function ElectionDetail() {
   const { id } = useParams()
-  if (currentRuntimeMode() === 'aptos-testnet' && id?.startsWith('chain-')) return <LiveElectionDetail electionId={id.slice('chain-'.length)} />
+  if (currentRuntimeMode() === 'aptos-testnet') {
+    return id?.startsWith('chain-')
+      ? <LiveElectionDetail electionId={id.slice('chain-'.length)} />
+      : <MissingTestnetElection />
+  }
   return <DemoElectionDetail id={id} />
 }
+
+function MissingTestnetElection() {
+  const { lang } = useT()
+  const ru = lang === 'ru'
+  return <>
+    <PageHead
+      title={ru ? 'Голосование не найдено в тестовой сети' : 'Election not found on Testnet'}
+      sub={ru ? 'Эта ссылка относится к старым демонстрационным данным и не является записью Aptos.' : 'This link belongs to the old demo dataset and is not an Aptos record.'}
+    />
+    <Panel title={ru ? 'Локальное голосование отключено' : 'Local voting is disabled'}>
+      <p className="muted">{ru ? 'В режиме Aptos сайт показывает только голосования, прочитанные из опубликованного модуля. Здесь нельзя создать локальную квитанцию или запись аудита.' : 'In Aptos mode the site only shows elections read from the published module. No local receipt or audit entry can be created here.'}</p>
+      <Link className="btn primary" to="/elections">{ru ? 'Открыть реестр голосований' : 'Open election registry'}</Link>
+    </Panel>
+  </>
+}
+
 
 function DemoElectionDetail({ id }: { id?: string }) {
   const { t, l, lang } = useT()

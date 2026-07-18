@@ -53,6 +53,7 @@ export interface Settings {
   volume: number
   musicOn: boolean
   musicVolume: number
+  musicInBackground: boolean
   reducedMotion: boolean
   identityMode: boolean // показывать личности вместо адресов
   lang: Lang
@@ -67,7 +68,7 @@ export interface Settings {
 }
 
 const defaultSettings: Settings = {
-  soundOn: true, volume: 0.5, musicOn: false, musicVolume: 0.65, reducedMotion: false, identityMode: true, lang: 'ru',
+  soundOn: true, volume: 0.5, musicOn: false, musicVolume: 0.59, musicInBackground: false, reducedMotion: false, identityMode: true, lang: 'ru',
   theme: 'system', dataLanguage: 'auto', documentsView: 'combined',
   profile: { name: '', email: '', telegram: '' },
   readDocs: [],
@@ -342,7 +343,6 @@ export function AppProviders({ children }: { children: ReactNode }) {
     sound.enabled = settings.soundOn
     sound.volume = settings.volume
     music.setVolume(settings.musicVolume)
-    if (!settings.musicOn && music.isPlaying) music.pause()
     document.documentElement.dataset.motion = settings.reducedMotion ? 'reduced' : 'full'
     const systemDark = window.matchMedia('(prefers-color-scheme: dark)').matches
     document.documentElement.dataset.theme = settings.theme === 'system'
@@ -354,6 +354,12 @@ export function AppProviders({ children }: { children: ReactNode }) {
 
   useEffect(() => { void music.prepare() }, [])
 
+
+  useEffect(() => {
+    music.setBackgroundPlayback(settings.musicInBackground)
+    if (settings.musicOn) void music.play()
+    else if (music.enabledIntent) music.pause()
+  }, [settings.musicInBackground, settings.musicOn])
   const settingsValue = useMemo(() => ({
     s: settings,
     update: (p: Partial<Settings>) => setSettings((s) => ({ ...s, ...p })),

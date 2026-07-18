@@ -21,6 +21,8 @@ import {
   submitManagedSponsoredVote,
   verifyPublishedModules,
   waitForVote,
+  verifyElectionCreation,
+  verifyElectionFinalization,
 } from './lib/aptos-service.mjs'
 import { validateSponsoredVoteTransaction } from './lib/sponsored-intent.mjs'
 import { createTestnetSignInChallenge } from './lib/siwa-challenge.mjs'
@@ -91,11 +93,19 @@ import {
   updateProfile,
   upsertUser,
   consumeLogicGameRound,
+  createDocumentProposal,
+  getDocumentProposal,
+  getDocumentProposalByHash,
+  listDocumentProposals,
+  listRecordedChainTransactions,
+  publishDocumentProposal,
+  recordDocumentProposalFinalization,
 } from './lib/storage.mjs'
 import { decryptManagedPrivateKey, encryptManagedPrivateKey, hashEmailCode, hashPassword, verifyOperatorToken, verifyPassword } from './lib/credentials.mjs'
 import { emailDeliveryConfigured, sendPasswordChangedNotice, sendVerificationCode } from './lib/mailer.mjs'
 import { getLogicChallenge, logicChallenges, presentLogicChallenge, scoreLogicAnswer } from './lib/logic-game.mjs'
 
+import { canonicalJson, createProposalPayload, proposalSha256 } from './lib/document-proposal.mjs'
 const webRoot = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const distRoot = join(webRoot, 'dist')
 const runtimeRoot = join(webRoot, '.runtime')
@@ -109,6 +119,7 @@ const opsPort = Number(option('--ops-port', '4177'))
 const shouldOpen = args.includes('--open')
 const startedAt = new Date().toISOString()
 // Sponsorship stays fail-closed until the published modules can be reproduced
+const publicSiteOrigin = (process.env.PUBLIC_SITE_ORIGIN ?? 'https://novyway.com').replace(/\/$/, '')
 // from the reviewed Move source and toolchain, not merely matched by byte hash.
 const sponsorshipLocked = process.env.SPONSORSHIP_EMERGENCY_LOCK === '1'
 
@@ -204,6 +215,32 @@ const equalAdminVoteSchema = z.object({
   choice: z.number().int().min(1).max(3),
   idempotencyKey: z.string().uuid(),
 })
+const documentProposalSchema = z.object({
+  idempotencyKey: z.string().uuid(),
+  documentId: z.string().trim().regex(/^[a-z0-9][a-z0-9-]{0,79}$/),
+  documentTitleRu: z.string().trim().min(1).max(300),
+  documentTitleEn: z.string().trim().min(1).max(300),
+  baseVersion: z.string().trim().min(1).max(80),
+  baseDocumentHash: z.string().trim().toLowerCase().regex(/^0x[0-9a-f]{8,64}$/),
+  clauseId: z.string().trim().regex(/^[a-z0-9][a-z0-9-]{0,79}$/),
+  clauseNumber: z.string().trim().min(1).max(40),
+  clauseTitleRu: z.string().trim().min(1).max(300),
+  clauseTitleEn: z.string().trim().min(1).max(300),
+  currentTextRu: z.string().trim().min(1).max(20_000),
+  currentTextEn: z.string().trim().min(1).max(20_000),
+  kind: z.enum(['replace', 'insert', 'delete']),
+  proposedTextRu: z.string().trim().min(1).max(20_000),
+  proposedTextEn: z.string().trim().min(1).max(20_000),
+  rationaleRu: z.string().trim().min(1).max(10_000),
+  rationaleEn: z.string().trim().min(1).max(10_000),
+  categoryId: z.string().regex(/^\d+$/),
+  durationDays: z.number().int().min(1).max(365),
+  passBps: z.number().int().min(5_000).max(10_000),
+  quorumBps: z.number().int().min(0).max(10_000),
+  allowRevote: z.boolean().default(true),
+}).strict()
+const proposalPublishSchema = z.object({ txHash: z.string().regex(/^0x[0-9a-f]{64}$/i) }).strict()
+
 const passwordSchema = z.string().min(12).max(128)
 const passwordRegisterSchema = z.object({
   email: z.string().trim().email().max(160),
@@ -364,6 +401,13 @@ async function requireSuperAdmin(request) {
   return session
 }
 
+async function requireGovernanceAdmin(request) {
+  const session = await requireSession(request)
+  const permissions = await permissionsFor(session)
+  if (!permissions.isAdmin) throw Object.assign(new Error('governance_admin_required'), { status: 403 })
+  return session
+}
+
 function votingAddressFor(session) {
   if (session.auth_method === 'aptos_signature' && typeof session.auth_address === 'string') {
     return session.auth_address.toLowerCase()
@@ -434,6 +478,164 @@ async function handlePublicApi(request, response, url) {
     const settings = await getSettings()
     return json(response, 200, { network: 'testnet', moduleAddress: aptosRuntime.moduleAddress, features: { accounts: true, aptosConnect: true, passwordAccounts: true, emailDelivery: emailDeliveryConfigured(), sponsoredVotes: settings.sponsorshipEnabled && !sponsorshipLocked } })
   }
+  if (url.pathname === '/api/v1/document-proposals' && request.method === 'GET') {
+    const documentId = url.searchParams.get('documentId')
+    const electionId = url.searchParams.get('electionId')
+    if (documentId && !/^[a-z0-9][a-z0-9-]{0,79}$/.test(documentId)) {
+      throw Object.assign(new Error('invalid_document_id'), { status: 400 })
+    }
+    if (electionId && !/^\d+$/.test(electionId)) throw Object.assign(new Error('invalid_election_id'), { status: 400 })
+    return json(response, 200, {
+      proposals: await listDocumentProposals({ documentId, electionId }),
+    }, { 'Cache-Control': 'no-store' })
+  }
+  const proposalHashMatch = url.pathname.match(/^\/api\/v1\/document-proposals\/sha256\/(0x[0-9a-f]{64})$/i)
+  if (proposalHashMatch && request.method === 'GET') {
+    const proposal = await getDocumentProposalByHash(proposalHashMatch[1])
+    if (!proposal) return json(response, 404, { error: 'proposal_not_found' })
+    const body = proposal.canonicalText
+    response.writeHead(200, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Content-Length': Buffer.byteLength(body),
+      'Cache-Control': 'public, max-age=31536000, immutable',
+      ...securityHeaders,
+    })
+    return response.end(body)
+  }
+  const publicProposalMatch = url.pathname.match(/^\/api\/v1\/document-proposals\/([0-9a-f-]{36})$/)
+  if (publicProposalMatch && request.method === 'GET') {
+    const proposal = await getDocumentProposal(publicProposalMatch[1])
+    return proposal
+      ? json(response, 200, { proposal }, { 'Cache-Control': 'no-store' })
+      : json(response, 404, { error: 'proposal_not_found' })
+  }
+  if (url.pathname === '/api/v1/chain-transactions' && request.method === 'GET') {
+    return json(response, 200, { transactionHashes: await listRecordedChainTransactions() }, { 'Cache-Control': 'no-store' })
+  }
+  if (url.pathname === '/api/v1/governance/document-proposals' && request.method === 'GET') {
+    await requireGovernanceAdmin(request)
+    const documentId = url.searchParams.get('documentId')
+    return json(response, 200, {
+      proposals: await listDocumentProposals({ documentId, includeDrafts: true }),
+    }, { 'Cache-Control': 'no-store' })
+  }
+  if (url.pathname === '/api/v1/governance/document-proposals' && request.method === 'POST') {
+    const session = await requireGovernanceAdmin(request)
+    requireCsrf(request, session)
+    rateLimit(request, 'document-proposal-create', 30, 60 * 60_000)
+    const input = documentProposalSchema.parse(await readJson(request, 96_000))
+    const id = randomUUID()
+    const createdAt = new Date().toISOString()
+    const endsAtSecs = String(Math.floor(Date.now() / 1000) + input.durationDays * 86_400)
+    const payload = createProposalPayload({ ...input, endsAtSecs }, {
+      id,
+      createdAt,
+      createdByAddress: session.auth_address,
+    })
+    const canonicalText = canonicalJson(payload)
+    const metadataHash = proposalSha256(payload)
+    const metadataUri = `${publicSiteOrigin}/api/v1/document-proposals/sha256/${metadataHash}`
+    const proposal = await createDocumentProposal({
+      id,
+      documentId: input.documentId,
+      clauseId: input.clauseId,
+      categoryId: input.categoryId,
+      canonicalText,
+      payload,
+      metadataHash,
+      metadataUri,
+      chainId: 2,
+      moduleAddress: aptosRuntime.moduleAddress,
+      deploymentGeneration: aptosRuntime.deploymentGeneration,
+      createdBy: session.user_id,
+      idempotencyKey: input.idempotencyKey,
+      createdAt,
+    })
+    return json(response, 201, {
+      proposal,
+      transaction: {
+        function: `${aptosRuntime.moduleAddress}::weighted_voting::create_election`,
+        functionArguments: [
+          input.categoryId,
+          Array.from(Buffer.from(metadataHash.slice(2), 'hex')),
+          Array.from(Buffer.from(metadataUri, 'utf8')),
+          '0',
+          endsAtSecs,
+          input.passBps,
+          input.quorumBps,
+          input.allowRevote,
+        ],
+      },
+    }, { 'Cache-Control': 'no-store' })
+  }
+  const publishProposalMatch = url.pathname.match(/^\/api\/v1\/governance\/document-proposals\/([0-9a-f-]{36})\/publish$/)
+  if (publishProposalMatch && request.method === 'POST') {
+    const session = await requireGovernanceAdmin(request)
+    requireCsrf(request, session)
+    rateLimit(request, 'document-proposal-publish', 60, 60 * 60_000)
+    const input = proposalPublishSchema.parse(await readJson(request))
+    const proposal = await getDocumentProposal(publishProposalMatch[1], { includeDrafts: true })
+    if (!proposal) return json(response, 404, { error: 'proposal_not_found' })
+    const verified = await verifyElectionCreation({
+      txHash: input.txHash,
+      expectedAdmin: session.auth_address,
+      expectedCategoryId: proposal.categoryId,
+      expectedMetadataHash: proposal.metadataHash,
+      expectedMetadataUri: proposal.metadataUri,
+      expectedEndsAtSecs: proposal.payload.voting.endsAtSecs,
+      expectedPassBps: proposal.payload.voting.passBps,
+      expectedQuorumBps: proposal.payload.voting.quorumBps,
+      expectedAllowRevote: proposal.payload.voting.allowRevote,
+    })
+    if (verified.chainId !== proposal.chainId
+      || verified.moduleAddress !== proposal.moduleAddress.toLowerCase()
+      || verified.deploymentGeneration !== proposal.deploymentGeneration) {
+      throw Object.assign(new Error('proposal_deployment_mismatch'), { status: 409 })
+    }
+    const published = await publishDocumentProposal({
+      id: proposal.id,
+      electionId: verified.electionId,
+      txHash: verified.txHash,
+    })
+    await logEvent('governance', 'ok', 'Document amendment election published', {
+      proposalId: proposal.id,
+      electionId: verified.electionId,
+      txHash: verified.txHash,
+      documentId: proposal.documentId,
+    })
+    return json(response, 200, { proposal: published, verification: verified }, { 'Cache-Control': 'no-store' })
+  }
+  const finalizeProposalMatch = url.pathname.match(/^\/api\/v1\/governance\/document-proposals\/([0-9a-f-]{36})\/finalize$/)
+  if (finalizeProposalMatch && request.method === 'POST') {
+    const session = await requireGovernanceAdmin(request)
+    requireCsrf(request, session)
+    rateLimit(request, 'document-proposal-finalize', 60, 60 * 60_000)
+    const input = proposalPublishSchema.parse(await readJson(request))
+    const proposal = await getDocumentProposal(finalizeProposalMatch[1], { includeDrafts: true })
+    if (!proposal || proposal.status !== 'published' || !proposal.electionId) {
+      return json(response, 404, { error: 'published_proposal_not_found' })
+    }
+    const verified = await verifyElectionFinalization({
+      txHash: input.txHash,
+      expectedSender: session.auth_address,
+      expectedElectionId: proposal.electionId,
+    })
+    const finalized = await recordDocumentProposalFinalization({
+      id: proposal.id,
+      txHash: verified.txHash,
+    })
+    await logEvent('governance', 'ok', 'Document amendment election finalized', {
+      proposalId: proposal.id,
+      electionId: verified.electionId,
+      txHash: verified.txHash,
+      quorumMet: verified.quorumMet,
+      passed: verified.passed,
+      documentId: proposal.documentId,
+    })
+    return json(response, 200, { proposal: finalized, verification: verified }, { 'Cache-Control': 'no-store' })
+  }
+
+
   if (url.pathname === '/api/logic-game/state' && request.method === 'GET') {
     const session = await sessionFromRequest(request)
     return json(response, 200, {

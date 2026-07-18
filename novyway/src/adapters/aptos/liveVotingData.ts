@@ -111,7 +111,7 @@ function electionStatus(rawStatus: number, startsAtSecs: string, endsAtSecs: str
   const now = Date.now() / 1000
   if (now < Number(startsAtSecs)) return 'upcoming'
   if (now <= Number(endsAtSecs)) return 'active'
-  return 'quorum_failed'
+  return 'awaiting_finalization'
 }
 
 async function loadCategory(gateway: AptosReadGateway, id: number): Promise<LiveCategory> {
@@ -249,6 +249,23 @@ const knownTransactions = [
   '0x75db6dfc959079dbd90e0bbe262aeb9c984f0a6997bc624ea2f94615f53236fe',
 ] as const
 
+async function recordedTransactionHashes() {
+  try {
+    const response = await fetch('/api/v1/chain-transactions', {
+      credentials: 'same-origin',
+      cache: 'no-store',
+    })
+    if (!response.ok) return []
+    const body: unknown = await response.json()
+    if (!body || typeof body !== 'object' || !Array.isArray((body as { transactionHashes?: unknown }).transactionHashes)) return []
+    return (body as { transactionHashes: unknown[] }).transactionHashes
+      .filter((value): value is string => typeof value === 'string' && /^0x[0-9a-f]{64}$/i.test(value))
+      .map((value) => value.toLowerCase())
+  } catch {
+    return []
+  }
+}
+
 interface AptosTransaction {
   type?: string
   hash: string
@@ -323,7 +340,12 @@ let auditCache: Promise<LiveAuditEvent[]> | undefined
 
 export function loadLiveAudit(refresh = false) {
   if (!auditCache || refresh) {
-    auditCache = Promise.allSettled(knownTransactions.map(fetchTransaction)).then((results) => results.flatMap((result) => result.status === 'fulfilled' ? result.value : []).sort((a, b) => b.at.localeCompare(a.at)))
+    auditCache = (async () => {
+      const recorded = await recordedTransactionHashes()
+      const hashes = [...new Set<string>([...knownTransactions, ...recorded])]
+      const results = await Promise.allSettled(hashes.map(fetchTransaction))
+      return results.flatMap((result) => result.status === 'fulfilled' ? result.value : []).sort((a, b) => b.at.localeCompare(a.at))
+    })()
   }
   return auditCache
 }

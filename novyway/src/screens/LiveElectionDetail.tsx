@@ -1,10 +1,13 @@
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { configuredVotingModule } from '../adapters/aptos/aptosReadGateway'
 import { aptosTestnetExplorer } from '../adapters/aptos/documentAnchorGateway'
 import { useLiveVoting } from '../adapters/aptos/useLiveAptos'
 import { fmtDate, shortAddr, useT } from '../i18n'
+import { proposalMatchesDocumentBase, useDocumentProposals, verifyDocumentProposal, type ProposalVerification } from '../adapters/documentProposals'
 import { KV, Meter, PageHead, Panel, StatusChip } from '../ui/components'
 import { SponsoredBallot } from '../ui/components/SponsoredBallot'
+import { useDocuments } from '../demo/store'
 
 const transactions: Record<string, { created?: string; finalized?: string }> = {
   '0': {
@@ -19,9 +22,29 @@ function units(value: string) {
 
 export function LiveElectionDetail({ electionId }: { electionId: string }) {
   const { t, lang } = useT()
+  const documents = useDocuments()
   const ru = lang === 'ru'
   const { data, loading, error, refresh } = useLiveVoting()
   const election = data?.elections.find((item) => item.id === electionId)
+  const registry = useDocumentProposals({ electionId })
+  const proposal = registry.proposals[0]
+  const document = proposal ? documents.find((item) => item.id === proposal.documentId) : undefined
+  const [integrity, setIntegrity] = useState<ProposalVerification | 'checking'>('unbound')
+
+  useEffect(() => {
+    let active = true
+    if (!proposal || !election) {
+      setIntegrity('unbound')
+      return () => { active = false }
+    }
+    if (!document || !proposalMatchesDocumentBase(proposal, document)) {
+      setIntegrity('mismatch')
+      return () => { active = false }
+    }
+    void verifyDocumentProposal(proposal, election).then((result) => { if (active) setIntegrity(result) })
+    setIntegrity('checking')
+    return () => { active = false }
+  }, [document, election, proposal])
   const category = data?.categories.find((item) => item.id === election?.categoryId)
 
   if (loading && !election) return <div className="empty">{ru ? 'Читаем голосование из Aptos Testnet…' : 'Reading election from Aptos Testnet…'}</div>
@@ -35,23 +58,66 @@ export function LiveElectionDetail({ electionId }: { electionId: string }) {
   const supportBase = yes + no
   const support = supportBase ? (yes / supportBase) * 100 : 0
   const turnout = Number(election.eligibleTotal) ? (total / Number(election.eligibleTotal)) * 100 : 0
-  const tx = transactions[election.id]
+  const verifiedProposal = integrity === 'verified' ? proposal : undefined
+  const fallbackTx = transactions[election.id]
+  const tx = {
+    created: verifiedProposal?.creationTxHash ?? fallbackTx?.created,
+    finalized: verifiedProposal?.finalizationTxHash ?? fallbackTx?.finalized,
+  }
+  const pageTitle = verifiedProposal
+    ? (ru ? verifiedProposal.payload.document.title.ru + ': § ' + verifiedProposal.payload.clause.number : verifiedProposal.payload.document.title.en + ': § ' + verifiedProposal.payload.clause.number)
+    : (ru ? 'Голосование №' : 'Election #') + election.id
+  const subjectVerificationPending = registry.loading || Boolean(proposal && integrity === 'checking')
+  const proposalAllowsVoting = !subjectVerificationPending && !registry.error && (!proposal || integrity === 'verified')
   const categoryName = ru
     ? category?.name === 'General' ? 'Общая' : category?.name === 'QA Demo' ? 'Проверка качества' : category?.name
     : category?.name
 
   return <>
     <PageHead
-      title={ru ? `Голосование №${election.id}` : `Election #${election.id}`}
+      title={pageTitle}
       sub={<span className="mono">{categoryName || `${ru ? 'Категория' : 'Category'} ${election.categoryId}`} · {ru ? 'снимок состава' : 'membership snapshot'} {election.membershipVersion} · {ru ? 'версия правил' : 'policy version'} {election.policyVersion}</span>}
       right={<StatusChip status={election.status} />}
     />
     <div className="grid c2">
       <div className="stack">
+        {registry.loading && <div className="empty">{ru ? 'Проверяем предмет решения…' : 'Verifying the subject…'}</div>}
+        {registry.error && <div className="callout red">{ru ? 'Не удалось проверить предмет решения. Бюллетень закрыт до восстановления связи с реестром.' : 'The subject could not be verified. The ballot is closed until the registry is available.'} <button className="btn small" onClick={registry.refresh}>{ru ? 'Повторить' : 'Retry'}</button></div>}
+        {!registry.loading && proposal && integrity === 'checking' && <div className="callout cyan">{ru ? 'Сверяем хеш и параметры поправки с Aptos…' : 'Checking the amendment hash and parameters against Aptos…'}</div>}
+        {proposal && integrity === 'mismatch' && <div className="callout red">{ru ? 'Текст поправки не совпал с хешем или параметрами голосования Aptos. Голосование заблокировано для безопасной проверки.' : 'The amendment text does not match its hash or Aptos election parameters. Voting is blocked for safety.'}</div>}
+        {verifiedProposal && (
+          <Panel
+            title={ru ? 'Предмет решения' : 'Subject of the decision'}
+            hint={(ru ? 'голосование №' : 'election #') + election.id}
+          >
+            <div className="proposal-document-ref">
+              <Link to={'/documents/' + verifiedProposal.documentId}>{ru ? verifiedProposal.payload.document.title.ru : verifiedProposal.payload.document.title.en}</Link>
+              <span>§ {verifiedProposal.payload.clause.number} · {ru ? verifiedProposal.payload.clause.title.ru : verifiedProposal.payload.clause.title.en}</span>
+            </div>
+            <div className="proposal-text-diff">
+              <section className="proposal-text-block current">
+                <span>{ru ? 'Действующая редакция' : 'Current text'}</span>
+                <p>{ru ? verifiedProposal.payload.clause.currentText.ru : verifiedProposal.payload.clause.currentText.en}</p>
+              </section>
+              <section className="proposal-text-block proposed">
+                <span>{ru ? 'Предлагаемая редакция' : 'Proposed text'}</span>
+                <p>{ru ? verifiedProposal.payload.amendment.proposedText.ru : verifiedProposal.payload.amendment.proposedText.en}</p>
+              </section>
+            </div>
+            <div className="callout cyan proposal-rationale">
+              <strong>{ru ? 'Обоснование' : 'Rationale'}</strong>
+              <p>{ru ? verifiedProposal.payload.amendment.rationale.ru : verifiedProposal.payload.amendment.rationale.en}</p>
+            </div>
+            <div className="proposal-proof-row">
+              <code>{verifiedProposal.metadataHash}</code>
+              <a href={verifiedProposal.metadataUri} target="_blank" rel="noreferrer">{ru ? 'Открыть неизменяемые метаданные' : 'Open immutable metadata'} ↗</a>
+            </div>
+          </Panel>
+        )}
         <Panel title={ru ? 'Публичные параметры' : 'Public parameters'}>
           <div className="stack">
             <KV k={ru ? 'Создатель' : 'Creator'} v={shortAddr(election.createdBy)} mono />
-            <KV k={ru ? 'Метаданные' : 'Metadata'} v={shortAddr(election.metadataHash)} mono />
+            <KV k={ru ? 'Метаданные' : 'Metadata'} v={verifiedProposal ? <a href={verifiedProposal.metadataUri} target="_blank" rel="noreferrer">{shortAddr(election.metadataHash)} ↗</a> : shortAddr(election.metadataHash)} mono />
             <KV k={ru ? 'Начало' : 'Starts'} v={fmtDate(new Date(Number(election.startsAtSecs) * 1000).toISOString(), lang, true)} />
             <KV k={ru ? 'Окончание' : 'Ends'} v={fmtDate(new Date(Number(election.endsAtSecs) * 1000).toISOString(), lang, true)} />
             <KV k={ru ? 'Порог принятия' : 'Pass threshold'} v={`${election.passBps / 100}%`} mono />
@@ -89,9 +155,15 @@ export function LiveElectionDetail({ electionId }: { electionId: string }) {
             <a className="btn small" href={aptosTestnetExplorer(`account/${configuredVotingModule()}/modules`)} target="_blank" rel="noreferrer">{ru ? 'Модуль' : 'Module'} ↗</a>
           </div>
         </Panel>
-        {election.status === 'active'
-          ? <SponsoredBallot electionId={election.id} allowRevote={election.allowRevote} />
-          : <div className="callout yellow">{ru ? 'Голосование сейчас не принимает новые голоса.' : 'This election is not accepting new votes.'}</div>}
+        {subjectVerificationPending
+          ? <div className="callout cyan">{ru ? 'Проверяем предмет решения перед открытием бюллетеня…' : 'Verifying the subject before opening the ballot…'}</div>
+          : registry.error
+            ? <div className="callout red">{ru ? 'Бюллетень временно закрыт: реестр предметов решения недоступен.' : 'The ballot is temporarily closed because the subject registry is unavailable.'}</div>
+            : election.status === 'active' && proposalAllowsVoting
+            ? <SponsoredBallot electionId={election.id} allowRevote={election.allowRevote} />
+            : election.status === 'active'
+              ? <div className="callout red">{ru ? 'Бюллетень заблокирован: предмет решения не прошёл проверку.' : 'The ballot is blocked because its subject failed verification.'}</div>
+              : <div className="callout yellow">{ru ? 'Голосование сейчас не принимает новые голоса.' : 'This election is not accepting new votes.'}</div>}
         <Link className="btn" to="/elections">← {t('common.back')}</Link>
       </div>
     </div>

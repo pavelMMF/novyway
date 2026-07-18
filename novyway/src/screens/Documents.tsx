@@ -5,6 +5,9 @@ import { groupColors, groupNames, useDocuments, useSettings, useStore } from '..
 import type { DocumentModel } from '../domain/types'
 import { CatChip, PageHead } from '../ui/components'
 import { OnChainDocumentRegistry } from '../ui/components/OnChainDocumentRegistry'
+import { currentRuntimeMode } from '../adapters/types'
+import { useDocumentProposals } from '../adapters/documentProposals'
+import { useLiveVoting } from '../adapters/aptos/useLiveAptos'
 // three.js — самый тяжёлый модуль бандла; грузим сцену только когда она видима
 const Graph = lazy(() => import('./Graph'))
 
@@ -12,12 +15,15 @@ type ViewMode = 'list' | 'graph' | 'combined'
 type SortMode = 'newest' | 'oldest' | 'name'
 
 export default function Documents() {
-  const { t, l } = useT()
+  const { t, l, lang } = useT()
   const { state } = useStore()
   const { s } = useSettings()
   const nav = useNavigate()
   const docs = useDocuments()
   const [params, setParams] = useSearchParams()
+  const testnet = currentRuntimeMode() === 'aptos-testnet'
+  const live = useLiveVoting()
+  const proposalRegistry = useDocumentProposals({ enabled: testnet })
   const requestedView = params.get('view') as ViewMode | null
   const view: ViewMode = ['list', 'graph', 'combined'].includes(requestedView ?? '') ? requestedView! : s.documentsView
   const [query, setQuery] = useState('')
@@ -26,20 +32,36 @@ export default function Documents() {
   const [sort, setSort] = useState<SortMode>('newest')
   const [activeOnly, setActiveOnly] = useState(false)
   const [spaceId, setSpaceId] = useState('all')
+  const proposalDataLoading = testnet && (live.loading || proposalRegistry.loading)
+  const proposalDataError = testnet ? (live.error ?? proposalRegistry.error) : null
+  const activeByDocument = useMemo(() => {
+    if (!testnet) return new Map<string, number>()
+    const activeElectionIds = new Set((live.data?.elections ?? [])
+      .filter((election) => election.status === 'active')
+      .map((election) => election.id))
+    return proposalRegistry.proposals.reduce((counts, proposal) => {
+      if (proposal.electionId && activeElectionIds.has(proposal.electionId)) counts.set(proposal.documentId, (counts.get(proposal.documentId) ?? 0) + 1)
+      return counts
+    }, new Map<string, number>())
+  }, [live.data?.elections, proposalRegistry.proposals, testnet])
+
 
   const visibleDocs = useMemo(() => docs
     .filter((document) => {
       const text = `${l(document.title)} ${l(groupNames[document.group])}`.toLowerCase()
       const primaryTopicMatch = primaryTopicId === 'all' || document.primaryTopicId === primaryTopicId
       const secondaryTopicMatch = secondaryTopicId === 'all' || document.secondaryTopicIds?.includes(secondaryTopicId)
-      const activeMatch = !activeOnly || documentHasActiveVote(document, state.elections)
+      const activeCount = testnet
+        ? (activeByDocument.get(document.id) ?? 0)
+        : documentActiveVoteCount(document, state.elections)
+      const activeMatch = !activeOnly || activeCount > 0
       return text.includes(query.trim().toLowerCase()) && primaryTopicMatch && secondaryTopicMatch && activeMatch
     })
     .sort((a, b) => {
       if (sort === 'name') return l(a.title).localeCompare(l(b.title))
       const delta = new Date(a.createdAt ?? 0).getTime() - new Date(b.createdAt ?? 0).getTime()
       return sort === 'newest' ? -delta : delta
-    }), [activeOnly, docs, l, primaryTopicId, query, secondaryTopicId, sort, state.elections])
+    }), [activeByDocument, activeOnly, docs, l, primaryTopicId, query, secondaryTopicId, sort, state.elections, testnet])
   const visibleDocumentIds = useMemo(() => visibleDocs.map((document) => document.id), [visibleDocs])
 
   function changeView(next: ViewMode) {
@@ -92,6 +114,11 @@ export default function Documents() {
           </label>
         )}
       </div>
+      {proposalDataError && <div className="callout red" role="alert">
+        {lang === 'ru' ? 'Не удалось обновить сведения об активных голосованиях. Фильтр временно недоступен.' : 'Active-election data could not be refreshed. The filter is temporarily unavailable.'}
+        {' '}<button className="btn small" onClick={() => { live.refresh(); proposalRegistry.refresh() }}>{lang === 'ru' ? 'Повторить' : 'Retry'}</button>
+      </div>}
+
 
       <div className={`documents-layout documents-layout--${view}`}>
         {(view === 'list' || view === 'combined') && (
@@ -100,9 +127,15 @@ export default function Documents() {
             data-document-pane="list"
           >
             {visibleDocs.map((document) => (
-              <DocumentCard key={document.id} document={document} onOpen={() => nav(`/documents/${document.id}`)} />
+              <DocumentCard key={document.id} document={document} activeCount={testnet ? (activeByDocument.get(document.id) ?? 0) : documentActiveVoteCount(document, state.elections)} onOpen={() => nav(`/documents/${document.id}`)} />
             ))}
-            {visibleDocs.length === 0 && <div className="empty panel">—</div>}
+            {visibleDocs.length === 0 && <div className="empty panel" aria-live="polite">
+              {activeOnly && proposalDataError
+                ? (lang === 'ru' ? 'Фильтр активных голосований временно недоступен.' : 'The active-election filter is temporarily unavailable.')
+                : activeOnly && proposalDataLoading
+                  ? (lang === 'ru' ? 'Проверяем активные голосования…' : 'Checking active elections…')
+                  : (lang === 'ru' ? 'Документы по выбранным условиям не найдены.' : 'No documents match the selected filters.')}
+            </div>}
           </div>
         )}
         {(view === 'graph' || view === 'combined') && (
@@ -119,18 +152,15 @@ export default function Documents() {
   )
 }
 
-function documentHasActiveVote(document: DocumentModel, elections: ReturnType<typeof useStore>['state']['elections']) {
-  return document.clauses.some((clause) => clause.amendment
-    && elections.some((election) => election.id === clause.amendment?.electionId && election.status === 'active'))
+function documentActiveVoteCount(document: DocumentModel, elections: ReturnType<typeof useStore>['state']['elections']) {
+  return document.clauses.filter((clause) => clause.amendment
+    && elections.some((election) => election.id === clause.amendment?.electionId && election.status === 'active')).length
 }
 
-function DocumentCard({ document, onOpen }: { document: DocumentModel; onOpen: () => void }) {
+function DocumentCard({ document, activeCount, onOpen }: { document: DocumentModel; activeCount: number; onOpen: () => void }) {
   const { t, l } = useT()
   const { state } = useStore()
   const category = state.categories.find((item) => item.id === document.categoryId)!
-  const amendments = document.clauses.filter((clause) => clause.amendment)
-  const activeCount = amendments.filter((clause) => state.elections
-    .find((election) => election.id === clause.amendment!.electionId)?.status === 'active').length
   const primary = state.topics.find((topic) => topic.id === document.primaryTopicId)
   const secondary = state.topics.filter((topic) => document.secondaryTopicIds?.includes(topic.id))
 

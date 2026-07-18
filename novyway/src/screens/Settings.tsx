@@ -8,7 +8,7 @@ import { useMusic } from '../sound/useMusic'
 export default function Settings() {
   const { t } = useT()
   const { s, update } = useSettings()
-  const { status: musicStatus, starting: musicStarting, setEnabled: setMusicEnabled } = useMusic()
+  const { status: musicStatus, starting: musicStarting, waiting: musicWaiting, setEnabled: setMusicEnabled } = useMusic()
 
   return (
     <>
@@ -52,18 +52,30 @@ export default function Settings() {
         <Panel title={s.lang === 'ru' ? 'Фоновая музыка' : 'Background music'} hint={s.lang === 'ru' ? 'отдельно от звуков интерфейса' : 'separate from interface sounds'}>
           <div className="stack">
             <Switch
-              checked={s.musicOn && musicStatus === 'playing'}
+              checked={s.musicOn}
               onChange={(value) => void setMusicEnabled(value)}
-              label={musicStarting ? (s.lang === 'ru' ? 'Запускаем музыку…' : 'Starting music…') : musicStatus === 'playing' ? (s.lang === 'ru' ? 'Музыка играет' : 'Music is playing') : (s.lang === 'ru' ? 'Включить музыку' : 'Enable music')}
+              label={musicWaiting
+                ? (s.lang === 'ru' ? 'Музыка включится после короткой паузы' : 'Music starts after a short pause')
+                : musicStatus === 'playing'
+                  ? (s.lang === 'ru' ? 'Музыка играет' : 'Music is playing')
+                  : s.musicOn
+                    ? (s.lang === 'ru' ? 'Музыка ждёт активную вкладку' : 'Music is waiting for this tab')
+                    : musicStarting
+                      ? (s.lang === 'ru' ? 'Запускаем музыку…' : 'Starting music…')
+                      : (s.lang === 'ru' ? 'Включить музыку' : 'Enable music')}
             />
             <label className="field" style={{ maxWidth: 260 }}>
               <span>{s.lang === 'ru' ? 'Громкость музыки' : 'Music volume'} · {Math.round(s.musicVolume * 100)}%</span>
               <input type="range" min={0} max={100} value={s.musicVolume * 100} style={{ ['--fill' as string]: `${s.musicVolume * 100}%` }} onChange={(event) => update({ musicVolume: Number(event.target.value) / 100 })} />
             </label>
             {music.currentTrack && <div className="mono muted">{music.currentTrack.title}</div>}
+            <div className="music-background-setting">
+              <Switch checked={s.musicInBackground} onChange={(value) => update({ musicInBackground: value })} label={s.lang === 'ru' ? 'Продолжать в других вкладках' : 'Keep playing outside this tab'} />
+              <p className="muted">{s.lang === 'ru' ? 'Если выключено, скрытая вкладка ставит музыку на паузу. После открытия сайта музыка всегда ждёт 30 секунд.' : 'When disabled, hiding this tab pauses the music. Music always waits 30 seconds after the site opens.'}</p>
+            </div>
             {musicStatus === 'unavailable' && <div className="callout yellow">{s.lang === 'ru' ? 'Музыка недоступна в этом окружении.' : 'Music is unavailable in this environment.'}</div>}
             {musicStatus === 'error' && <div className="callout red">{music.error}</div>}
-            {music.localPreview && <p className="muted">{s.lang === 'ru' ? 'Локальный предпросмотр: семь треков идут по порядку, загружается только текущий, переход длится 6 секунд.' : 'Local preview: seven tracks play in order, only the current track is streamed, with a six-second crossfade.'}</p>}
+            {music.localPreview && <p className="muted">{s.lang === 'ru' ? 'Локальный предпросмотр: семь треков идут по порядку, загружается только текущий, переход длится 10 секунд.' : 'Local preview: seven tracks play in order, only the current track is streamed, with a ten-second crossfade.'}</p>}
           </div>
         </Panel>
 

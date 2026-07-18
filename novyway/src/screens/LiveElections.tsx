@@ -8,7 +8,7 @@ import { fmtDate, shortAddr, useT } from '../i18n'
 import { PageHead, Panel, StatusChip } from '../ui/components'
 import { AdminElectionRegister } from '../ui/components/AdminElectionRegister'
 
-const statusFilters: (ElectionStatus | 'all')[] = ['all', 'active', 'upcoming', 'passed', 'rejected', 'quorum_failed']
+const statusFilters: (ElectionStatus | 'all')[] = ['all', 'active', 'upcoming', 'awaiting_finalization', 'passed', 'rejected', 'quorum_failed']
 const colors = ['var(--cyan)', 'var(--cat-law)', 'var(--cat-ecology)', 'var(--cat-education)']
 
 function pct(numerator: string, denominator: string) {

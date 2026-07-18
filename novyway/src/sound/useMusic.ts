@@ -12,34 +12,39 @@ import { music } from './music'
 export function useMusic() {
   const { s, update } = useSettings()
   const [, force] = useReducer((x) => x + 1, 0)
-  const [starting, setStarting] = useState(false)
+  const [busy, setBusy] = useState(false)
 
   // Re-render whenever the engine changes status / track / mute.
   useEffect(() => music.subscribe(force), [])
 
   const setEnabled = useCallback(async (enabled: boolean) => {
-    if (starting) return
+    if (busy) return
     update({ musicOn: enabled })
     if (!enabled) {
       music.pause()
       return
     }
     sound.stopIdleAmbience()
-    setStarting(true)
+    setBusy(true)
     const started = await music.play()
-    setStarting(false)
+    setBusy(false)
     if (!started) update({ musicOn: false })
-  }, [starting, update])
+  }, [busy, update])
 
   const playing = s.musicOn && music.status === 'playing'
-  const toggle = useCallback(() => { void setEnabled(!playing) }, [playing, setEnabled])
+  const enabled = s.musicOn
+  const waiting = s.musicOn && music.status === 'waiting'
+  const toggle = useCallback(() => { void setEnabled(!enabled) }, [enabled, setEnabled])
   const next = useCallback(() => { void music.skipNext() }, [])
   const toggleMute = useCallback(() => music.toggleMute(), [])
 
   return {
     status: music.status,
     playing,
-    starting,
+    enabled,
+    waiting,
+    busy,
+    starting: busy || waiting,
     muted: music.muted,
     currentTrack: music.currentTrack,
     trackCount: music.trackCount,

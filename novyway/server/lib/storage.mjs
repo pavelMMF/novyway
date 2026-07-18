@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { spawn } from 'node:child_process'
 import pg from 'pg'
 import { backupRoot, databaseConfigPath, postgresBin, secretsRoot } from './runtime-paths.mjs'
+import { publicProposal } from './document-proposal.mjs'
 
 export { backupRoot, secretsRoot }
 
@@ -178,6 +179,38 @@ export async function initializeStorage() {
     ALTER TABLE vote_intents ADD CONSTRAINT vote_intents_intent_kind_check
       CHECK (intent_kind IN ('weighted_vote', 'admin_equal_vote'));
 
+    CREATE TABLE IF NOT EXISTS document_proposals (
+      id uuid PRIMARY KEY,
+      document_id text NOT NULL,
+      clause_id text NOT NULL,
+      category_id bigint NOT NULL CHECK (category_id >= 0),
+      canonical_text text NOT NULL,
+      payload_json jsonb NOT NULL,
+      CHECK (canonical_text::jsonb = payload_json),
+      metadata_hash text NOT NULL UNIQUE CHECK (metadata_hash ~ '^0x[0-9a-f]{64}$'),
+      metadata_uri text NOT NULL UNIQUE,
+      status text NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'published')),
+      chain_id integer NOT NULL DEFAULT 2,
+      module_address text NOT NULL,
+      deployment_generation text NOT NULL,
+      election_id bigint,
+      creation_tx_hash text UNIQUE,
+      finalization_tx_hash text,
+      created_by uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+      idempotency_key uuid,
+      created_at timestamptz NOT NULL,
+      published_at timestamptz,
+      UNIQUE(chain_id, module_address, deployment_generation, election_id)
+    );
+    ALTER TABLE document_proposals ADD COLUMN IF NOT EXISTS finalization_tx_hash text;
+    ALTER TABLE document_proposals ADD COLUMN IF NOT EXISTS idempotency_key uuid;
+    CREATE UNIQUE INDEX IF NOT EXISTS document_proposals_idempotency_unique
+      ON document_proposals(created_by, idempotency_key) WHERE idempotency_key IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS document_proposals_finalization_tx_unique
+      ON document_proposals(finalization_tx_hash) WHERE finalization_tx_hash IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS document_proposals_document_idx ON document_proposals(document_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS document_proposals_status_idx ON document_proposals(status, created_at DESC);
+
     CREATE TABLE IF NOT EXISTS settings (
       key text PRIMARY KEY,
       value_json jsonb NOT NULL,
@@ -260,7 +293,7 @@ export async function initializeStorage() {
       provider, true, created_at FROM users
     ON CONFLICT (aptos_address) DO NOTHING`)
     await client.query(`INSERT INTO schema_migrations (version, applied_at)
-      VALUES (20260717, NOW()), (2026071701, NOW()) ON CONFLICT (version) DO NOTHING`)
+      VALUES (20260717, NOW()), (2026071701, NOW()), (2026071801, NOW()) ON CONFLICT (version) DO NOTHING`)
     await client.query('COMMIT')
   } catch (error) {
     await client.query('ROLLBACK')
@@ -833,6 +866,111 @@ export async function listGovernanceUsers() {
   const { rows } = await pool.query(`SELECT id, aptos_address, display_name, provider, role, status, created_at, last_login_at
     FROM users WHERE status = 'active' ORDER BY COALESCE(display_name, aptos_address), created_at`)
   return rows
+}
+
+export async function createDocumentProposal(input) {
+  const values = [
+    input.id,
+    input.documentId,
+    input.clauseId,
+    input.categoryId,
+    input.canonicalText,
+    JSON.stringify(input.payload),
+    input.metadataHash,
+    input.metadataUri,
+    input.chainId,
+    input.moduleAddress.toLowerCase(),
+    input.deploymentGeneration,
+    input.createdBy,
+    input.idempotencyKey,
+    input.createdAt,
+  ]
+  const inserted = await pool.query(`INSERT INTO document_proposals
+    (id, document_id, clause_id, category_id, canonical_text, payload_json, metadata_hash, metadata_uri,
+     chain_id, module_address, deployment_generation, created_by, idempotency_key, created_at)
+    VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13, $14)
+    ON CONFLICT (created_by, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
+    RETURNING *`, values)
+  if (inserted.rows[0]) return publicProposal(inserted.rows[0])
+
+  const existing = await pool.query(`SELECT * FROM document_proposals
+    WHERE created_by = $1 AND idempotency_key = $2`, [input.createdBy, input.idempotencyKey])
+  const row = existing.rows[0]
+  if (!row || row.canonical_text !== input.canonicalText) {
+    throw Object.assign(new Error('idempotency_payload_mismatch'), { status: 409 })
+  }
+  return publicProposal(row)
+}
+
+export async function getDocumentProposal(id, { includeDrafts = false } = {}) {
+  const { rows } = await pool.query(`SELECT * FROM document_proposals
+    WHERE id = $1 AND ($2::boolean OR status = 'published')`, [id, includeDrafts])
+  return rows[0] ? publicProposal(rows[0]) : null
+}
+
+export async function getDocumentProposalByHash(metadataHash, { includeDrafts = false } = {}) {
+  const { rows } = await pool.query(`SELECT * FROM document_proposals
+    WHERE metadata_hash = $1 AND ($2::boolean OR status = 'published')`, [metadataHash.toLowerCase(), includeDrafts])
+  return rows[0] ? publicProposal(rows[0]) : null
+}
+
+export async function listDocumentProposals({ documentId = null, electionId = null, includeDrafts = false } = {}) {
+  const { rows } = await pool.query(`SELECT * FROM document_proposals
+    WHERE ($1::text IS NULL OR document_id = $1)
+      AND ($2::bigint IS NULL OR election_id = $2)
+      AND ($3::boolean OR status = 'published')
+    ORDER BY created_at DESC`, [documentId, electionId, includeDrafts])
+  return rows.map(publicProposal)
+}
+
+export async function publishDocumentProposal({ id, electionId, txHash }) {
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const selected = await client.query('SELECT * FROM document_proposals WHERE id = $1 FOR UPDATE', [id])
+    const row = selected.rows[0]
+    if (!row) throw Object.assign(new Error('proposal_not_found'), { status: 404 })
+    if (row.status === 'published') {
+      const sameBinding = String(row.election_id) === String(electionId)
+        && row.creation_tx_hash?.toLowerCase() === txHash.toLowerCase()
+      if (!sameBinding) throw Object.assign(new Error('proposal_already_published'), { status: 409 })
+      await client.query('COMMIT')
+      return publicProposal(row)
+    }
+    const updated = await client.query(`UPDATE document_proposals
+      SET status = 'published', election_id = $2, creation_tx_hash = $3, published_at = NOW()
+      WHERE id = $1 AND status = 'draft'
+      RETURNING *`, [id, electionId, txHash.toLowerCase()])
+    await client.query('COMMIT')
+    return publicProposal(updated.rows[0])
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {})
+    throw error
+  } finally {
+    client.release()
+  }
+}
+
+export async function recordDocumentProposalFinalization({ id, txHash }) {
+  const { rows } = await pool.query(`UPDATE document_proposals
+    SET finalization_tx_hash = COALESCE(finalization_tx_hash, $2)
+    WHERE id = $1 AND status = 'published'
+      AND (finalization_tx_hash IS NULL OR finalization_tx_hash = $2)
+    RETURNING *`, [id, txHash.toLowerCase()])
+  if (!rows[0]) throw Object.assign(new Error('proposal_finalization_conflict'), { status: 409 })
+  return publicProposal(rows[0])
+}
+
+export async function listRecordedChainTransactions() {
+  const { rows } = await pool.query(`
+    SELECT creation_tx_hash AS tx_hash FROM document_proposals WHERE creation_tx_hash IS NOT NULL
+    UNION SELECT finalization_tx_hash FROM document_proposals WHERE finalization_tx_hash IS NOT NULL
+    UNION SELECT tx_hash FROM vote_intents WHERE tx_hash IS NOT NULL
+    UNION SELECT details_json->>'txHash' FROM ops_events WHERE details_json ? 'txHash'
+  `)
+  return [...new Set(rows
+    .map((row) => String(row.tx_hash ?? '').toLowerCase())
+    .filter((value) => /^0x[0-9a-f]{64}$/.test(value)))]
 }
 
 export async function getSettings() {

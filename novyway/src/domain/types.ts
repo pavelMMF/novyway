@@ -119,7 +119,7 @@ export interface GraphSpace {
   documentIds: string[]
 }
 
-export type ElectionStatus = 'active' | 'upcoming' | 'passed' | 'rejected' | 'quorum_failed'
+export type ElectionStatus = 'active' | 'upcoming' | 'awaiting_finalization' | 'passed' | 'rejected' | 'quorum_failed'
 
 export interface Election {
   id: string

@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { fmtDate, useT } from '../i18n'
 import { exams, groupCountsOf, useDocuments, useStore } from '../demo/adminHelpers'
 import { AccountRef, KV, Lvl, PageHead, Panel } from '../ui/components'
@@ -7,6 +8,8 @@ import { sound } from '../sound/engine'
 import type { Election, ElectionSnapshot } from '../domain/types'
 import { useGovernanceAdmin } from '../ui/components/GovernanceAdminGate'
 import { AdminMembership } from '../ui/components/AdminMembership'
+import { DocumentElectionManager } from '../ui/components/DocumentElectionManager'
+import { currentRuntimeMode } from '../adapters/types'
 import { useAccountSession } from '../auth/session'
 
 type Tab = 'admins' | 'quals' | 'policies' | 'election' | 'content' | 'log'
@@ -16,7 +19,12 @@ export default function Admin() {
   const admin = useGovernanceAdmin()
   const { user } = useAccountSession()
   const canManageMembership = admin.isCreator && user?.isSuperAdmin === true
-  const [tab, setTab] = useState<Tab>(canManageMembership ? 'admins' : 'quals')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const requestedTab = searchParams.get('tab') as Tab | null
+  const requestedTabAllowed = requestedTab !== null
+    && ['admins', 'quals', 'policies', 'election', 'content', 'log'].includes(requestedTab)
+    && (requestedTab !== 'admins' || canManageMembership)
+  const [tab, setTab] = useState<Tab>(requestedTabAllowed ? requestedTab : (canManageMembership ? 'admins' : 'quals'))
 
   const tabs: { id: Tab; label: string }[] = [
     ...(canManageMembership ? [{ id: 'admins' as const, label: lang === 'ru' ? 'Состав Совета' : 'Council membership' }] : []),
@@ -26,6 +34,13 @@ export default function Admin() {
     { id: 'content', label: t('ad.content') },
     { id: 'log', label: t('ad.log') },
   ]
+  function selectTab(next: Tab) {
+    setTab(next)
+    const nextParams = new URLSearchParams(searchParams)
+    nextParams.set('tab', next)
+    setSearchParams(nextParams, { replace: true })
+  }
+
 
   return (
     <>
@@ -43,16 +58,16 @@ export default function Admin() {
         <Panel tight title={lang === 'ru' ? 'Версии состояния' : 'State versions'}><span className="mono">{admin.versions.join(' / ')}</span></Panel>
         <Panel tight title={lang === 'ru' ? 'Ваш Aptos-адрес' : 'Your Aptos address'}><span className="mono governance-address">{admin.address}</span></Panel>
       </div>
-      <div className="callout green governance-draft-note">{lang === 'ru' ? 'Состав Совета и выборы администраторов работают напрямую через Aptos Testnet. Остальные редакторы ниже пока сохраняют демонстрационные черновики.' : 'Council membership and administrator elections now operate directly through Aptos Testnet. The remaining editors below still save demonstration drafts.'}</div>
+      <div className="callout green governance-draft-note">{lang === 'ru' ? 'Состав Совета, выборы администраторов и голосования по поправкам работают через Aptos Testnet. Редакторы квалификаций, политик и контента пока сохраняют демонстрационные черновики.' : 'Council membership, administrator elections, and amendment elections operate through Aptos Testnet. Qualification, policy, and content editors still save demonstration drafts.'}</div>
       <div className="seg admin-tabs" role="tablist" style={{ marginBottom: 16 }}>
         {tabs.map((x) => (
-          <button key={x.id} role="tab" aria-selected={tab === x.id} className={tab === x.id ? 'on' : ''} onClick={() => setTab(x.id)}>{x.label}</button>
+          <button key={x.id} role="tab" aria-selected={tab === x.id} className={tab === x.id ? 'on' : ''} onClick={() => selectTab(x.id)}>{x.label}</button>
         ))}
       </div>
       {tab === 'admins' && canManageMembership && <AdminMembership governance={admin} />}
       {tab === 'quals' && <QualQueue />}
       {tab === 'policies' && <PolicyEditor />}
-      {tab === 'election' && <NewElection />}
+      {tab === 'election' && (currentRuntimeMode() === 'aptos-testnet' ? <DocumentElectionManager /> : <NewElection />)}
       {tab === 'content' && <ContentManager />}
       {tab === 'log' && <AdminLog />}
     </>

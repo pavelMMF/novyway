@@ -27,6 +27,9 @@ export const publishedPackageEvidence = Object.freeze({
   }),
 })
 const publishedModuleHashes = publishedPackageEvidence.moduleHashes
+const deploymentGeneration = process.env.APTOS_DEPLOYMENT_GENERATION
+  ?? `testnet-g1-${publishedPackageEvidence.sourceDigest.slice(0, 16).toLowerCase()}`
+
 export const aptosClient = new Aptos(new AptosConfig({ network: Network.TESTNET }))
 
 function loadOrCreateRelayer() {
@@ -49,6 +52,7 @@ export const aptosRuntime = {
   network: 'testnet',
   moduleAddress,
   relayerAddress: relayer.accountAddress.toString(),
+  deploymentGeneration,
   sourceParityVerified: false,
   reproducibleSourceVerified: false,
   moduleHashes: {},
@@ -239,4 +243,141 @@ export async function submitManagedSponsoredVote({ transaction, privateKey }) {
 
 export async function waitForVote(txHash) {
   return aptosClient.waitForTransaction({ transactionHash: txHash, options: { timeoutSecs: 30, checkSuccess: false } })
+}
+
+function normalizeAptosAddress(value) {
+  const hex = String(value ?? '').toLowerCase().replace(/^0x/, '')
+  if (!/^[0-9a-f]{1,64}$/.test(hex)) throw new Error('invalid_aptos_address')
+  return `0x${hex.padStart(64, '0')}`
+}
+
+function textFromMoveBytes(value) {
+  if (typeof value !== 'string' || !/^0x[0-9a-f]*$/i.test(value)) throw new Error('invalid_move_text_bytes')
+  return Buffer.from(value.slice(2), 'hex').toString('utf8')
+}
+
+export async function verifyElectionCreation({
+  txHash,
+  expectedAdmin,
+  expectedCategoryId,
+  expectedMetadataHash,
+  expectedMetadataUri,
+  expectedEndsAtSecs,
+  expectedPassBps,
+  expectedQuorumBps,
+  expectedAllowRevote,
+}) {
+  if (!/^0x[0-9a-f]{64}$/i.test(txHash)) throw Object.assign(new Error('invalid_transaction_hash'), { status: 400 })
+  const transaction = await aptosClient.waitForTransaction({
+    transactionHash: txHash,
+    options: { timeoutSecs: 30, checkSuccess: false },
+  })
+  if (transaction.type !== 'user_transaction' || transaction.success !== true) {
+    throw Object.assign(new Error('election_transaction_failed'), { status: 409 })
+  }
+  if (normalizeAptosAddress(transaction.sender) !== normalizeAptosAddress(expectedAdmin)) {
+    throw Object.assign(new Error('election_sender_mismatch'), { status: 403 })
+  }
+  const expectedFunction = `${moduleAddress}::weighted_voting::create_election`.toLowerCase()
+  if (String(transaction.payload?.function ?? '').toLowerCase() !== expectedFunction) {
+    throw Object.assign(new Error('election_function_mismatch'), { status: 409 })
+  }
+
+  const access = await governanceAccess(expectedAdmin)
+  if (!access.isAdmin) throw Object.assign(new Error('governance_admin_required'), { status: 403 })
+
+  const expectedEventType = `${moduleAddress}::weighted_voting::ElectionCreated`.toLowerCase()
+  const events = (transaction.events ?? []).filter((event) => String(event.type).toLowerCase() === expectedEventType)
+  if (events.length !== 1) throw Object.assign(new Error('election_created_event_mismatch'), { status: 409 })
+  const event = events[0].data ?? {}
+  if (normalizeAptosAddress(event.creator) !== normalizeAptosAddress(expectedAdmin)
+    || String(event.category_id) !== String(expectedCategoryId)) {
+    throw Object.assign(new Error('election_created_event_data_mismatch'), { status: 409 })
+  }
+  const electionId = String(event.election_id)
+  if (!/^\d+$/.test(electionId)) throw Object.assign(new Error('invalid_election_id'), { status: 409 })
+
+  const election = await aptosClient.view({
+    payload: {
+      function: `${moduleAddress}::weighted_voting::election`,
+      functionArguments: [electionId],
+    },
+  })
+  const immutableStateMatches = normalizeAptosAddress(election[0]) === normalizeAptosAddress(expectedAdmin)
+    && String(election[1]) === String(expectedCategoryId)
+    && String(election[2]).toLowerCase() === expectedMetadataHash.toLowerCase()
+    && textFromMoveBytes(election[3]) === expectedMetadataUri
+    && Number(election[6]) === Number(expectedPassBps)
+    && Number(election[7]) === Number(expectedQuorumBps)
+    && Boolean(election[9]) === Boolean(expectedAllowRevote)
+    && String(election[11]) === String(expectedEndsAtSecs)
+  if (!immutableStateMatches) throw Object.assign(new Error('election_state_mismatch'), { status: 409 })
+
+  return {
+    electionId,
+    sender: normalizeAptosAddress(transaction.sender),
+    txHash: String(transaction.hash).toLowerCase(),
+    ledgerVersion: String(transaction.version),
+    chainId: 2,
+    moduleAddress: normalizeAptosAddress(moduleAddress),
+    deploymentGeneration,
+  }
+}
+
+export async function verifyElectionFinalization({ txHash, expectedSender, expectedElectionId }) {
+  if (!/^0x[0-9a-f]{64}$/i.test(txHash)) throw Object.assign(new Error('invalid_transaction_hash'), { status: 400 })
+  const transaction = await aptosClient.waitForTransaction({
+    transactionHash: txHash,
+    options: { timeoutSecs: 30, checkSuccess: false },
+  })
+  if (transaction.type !== 'user_transaction' || transaction.success !== true) {
+    throw Object.assign(new Error('finalization_transaction_failed'), { status: 409 })
+  }
+  if (normalizeAptosAddress(transaction.sender) !== normalizeAptosAddress(expectedSender)) {
+    throw Object.assign(new Error('finalization_sender_mismatch'), { status: 403 })
+  }
+  const expectedFunction = `${moduleAddress}::weighted_voting::finalize`.toLowerCase()
+  if (String(transaction.payload?.function ?? '').toLowerCase() !== expectedFunction) {
+    throw Object.assign(new Error('finalization_function_mismatch'), { status: 409 })
+  }
+
+  const expectedEventType = `${moduleAddress}::weighted_voting::ElectionFinalized`.toLowerCase()
+  const events = (transaction.events ?? []).filter((event) => String(event.type).toLowerCase() === expectedEventType)
+  if (events.length !== 1) throw Object.assign(new Error('election_finalized_event_mismatch'), { status: 409 })
+  const event = events[0].data ?? {}
+  if (String(event.election_id) !== String(expectedElectionId)) {
+    throw Object.assign(new Error('election_finalized_event_data_mismatch'), { status: 409 })
+  }
+
+  const [result, tallies] = await Promise.all([
+    aptosClient.view({
+      payload: {
+        function: `${moduleAddress}::weighted_voting::election_result`,
+        functionArguments: [String(expectedElectionId)],
+      },
+    }),
+    aptosClient.view({
+      payload: {
+        function: `${moduleAddress}::weighted_voting::election_tallies`,
+        functionArguments: [String(expectedElectionId)],
+      },
+    }),
+  ])
+  if (result[0] !== true
+    || Boolean(event.quorum_met) !== Boolean(result[1])
+    || Boolean(event.passed) !== Boolean(result[2])
+    || String(event.yes_units) !== String(tallies[0])
+    || String(event.no_units) !== String(tallies[1])
+    || String(event.abstain_units) !== String(tallies[2])) {
+    throw Object.assign(new Error('election_finalization_state_mismatch'), { status: 409 })
+  }
+
+  return {
+    electionId: String(expectedElectionId),
+    sender: normalizeAptosAddress(transaction.sender),
+    txHash: String(transaction.hash).toLowerCase(),
+    ledgerVersion: String(transaction.version),
+    quorumMet: Boolean(result[1]),
+    passed: Boolean(result[2]),
+  }
 }

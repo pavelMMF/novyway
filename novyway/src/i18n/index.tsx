@@ -97,6 +97,7 @@ const dict = {
 
   'st.active': { ru: 'Идёт', en: 'Active' },
   'st.upcoming': { ru: 'Скоро', en: 'Upcoming' },
+  'st.awaiting_finalization': { ru: 'Ожидает завершения', en: 'Awaiting finalization' },
   'st.passed': { ru: 'Принято', en: 'Passed' },
   'st.rejected': { ru: 'Отклонено', en: 'Rejected' },
   'st.quorum_failed': { ru: 'Нет кворума', en: 'No quorum' },

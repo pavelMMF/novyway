@@ -1,3 +1,4 @@
+import { useSettings } from '../../demo/store'
 import { useT } from '../../i18n'
 import { useMusic } from '../../sound/useMusic'
 
@@ -13,16 +14,30 @@ const SoundIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" {...stro
 
 export function MusicPlayer() {
   const { lang } = useT()
+  const { s, update } = useSettings()
   const ru = lang === 'ru'
-  const { status, playing, starting, muted, currentTrack, toggle, next, toggleMute } = useMusic()
+  const { status, enabled, playing, waiting, busy, starting, muted, currentTrack, toggle, next, toggleMute } = useMusic()
 
   // В окружении без прав на публичную музыку виджет не показываем.
   if (status === 'unavailable') return null
 
-  const playLabel = starting ? (ru ? 'Запуск…' : 'Starting…') : playing ? (ru ? 'Пауза' : 'Pause') : (ru ? 'Включить музыку' : 'Play music')
-  const title = playing || starting
+  const playLabel = busy
+    ? (ru ? 'Запуск…' : 'Starting…')
+    : waiting
+      ? (ru ? 'Отменить отложенный запуск' : 'Cancel delayed start')
+      : enabled
+        ? (ru ? 'Остановить музыку' : 'Stop music')
+        : (ru ? 'Включить музыку' : 'Play music')
+  const title = enabled || starting
     ? (currentTrack?.title ?? (ru ? 'Музыка' : 'Music'))
     : (ru ? 'Музыка' : 'Music')
+  const muteLabel = muted ? (ru ? 'Включить звук' : 'Unmute') : (ru ? 'Заглушить' : 'Mute')
+  const volume = Math.round(s.musicVolume * 100)
+
+  const setVolume = (value: number) => {
+    update({ musicVolume: value / 100 })
+    if (muted && value > 0) toggleMute()
+  }
 
   return (
     <div className={`music-player ${playing ? 'is-playing' : ''} ${muted ? 'is-muted' : ''} ${starting ? 'is-starting' : ''}`} role="group" aria-label={ru ? 'Фоновая музыка' : 'Background music'}>
@@ -31,15 +46,15 @@ export function MusicPlayer() {
         className="music-btn music-play"
         data-silent
         onClick={toggle}
-        disabled={starting}
-        aria-pressed={playing}
+        disabled={busy}
+        aria-pressed={enabled}
         aria-label={playLabel}
         title={playLabel}
       >
-        {playing ? <PauseIcon /> : <PlayIcon />}
+        {enabled ? <PauseIcon /> : <PlayIcon />}
       </button>
 
-      <div className="music-now" aria-hidden={!playing}>
+      <div className="music-now" aria-hidden={!enabled}>
         <span className="music-eq" aria-hidden><i /><i /><i /><i /></span>
         <span className="music-title">{title}</span>
       </div>
@@ -55,17 +70,32 @@ export function MusicPlayer() {
         <NextIcon />
       </button>
 
-      <button
-        type="button"
-        className="music-btn music-mute"
-        data-silent
-        onClick={toggleMute}
-        aria-pressed={muted}
-        aria-label={muted ? (ru ? 'Включить звук' : 'Unmute') : (ru ? 'Заглушить' : 'Mute')}
-        title={muted ? (ru ? 'Включить звук' : 'Unmute') : (ru ? 'Заглушить' : 'Mute')}
-      >
-        {muted ? <MutedIcon /> : <SoundIcon />}
-      </button>
+      <div className="music-volume-control" data-silent>
+        <div className="music-volume-popover">
+          <span className="music-volume-value" aria-hidden>{volume}%</span>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            step={1}
+            value={volume}
+            style={{ ['--fill' as string]: `${volume}%` }}
+            onChange={(event) => setVolume(Number(event.target.value))}
+            aria-label={ru ? 'Громкость фоновой музыки' : 'Background music volume'}
+          />
+        </div>
+        <button
+          type="button"
+          className="music-btn music-mute"
+          data-silent
+          onClick={toggleMute}
+          aria-pressed={muted}
+          aria-label={muteLabel}
+          title={muteLabel}
+        >
+          {muted ? <MutedIcon /> : <SoundIcon />}
+        </button>
+      </div>
     </div>
   )
 }
